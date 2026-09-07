@@ -1,0 +1,661 @@
+# AMPPS Explorer: the same four-step workflow locally or on a Shiny host.
+library(shiny)
+library(ggplot2)
+library(plotly)
+library(DT)
+source(file.path("R", "model.R"), local = TRUE)
+source(file.path("R", "provenance.R"), local = TRUE)
+source(file.path("R", "ega.R"), local = TRUE)
+source(file.path("R", "export.R"), local = TRUE)
+options(shiny.maxRequestSize = 50 * 1024^2, shiny.sanitize.errors = TRUE)
+
+APP_VERSION <- "1.0.2-review"
+DEMO <- load_demo_data("data")
+DEMO_SOURCES <- read.csv(file.path("data", "gss_year_cell_source.csv"), check.names = FALSE)
+DEMO_NETWORK <- load_demo_network("data")
+DEMO_ITEMS <- colnames(DEMO_NETWORK$adjacency)
+ACCENT <- "#176d78"
+`%or%` <- function(x, y) if (is.null(x) || !length(x)) y else x
+fmt <- function(x, d = 3) ifelse(is.finite(x), formatC(x, digits = d, format = "f"), "—")
+READABLE_LABELS <- c(Happy="General happiness", Trust="Interpersonal trust", Fair="Perceived fairness",
+  Health="Self-rated health", Life="Life excitement", Satjob="Job / housework satisfaction",
+  Hapmar="Marital happiness", Helpful="Perceived helpfulness", Finrela="Relative family income",
+  Finalter="Change in finances", News="Newspaper reading")
+readable_label <- function(items) {
+  labels <- unname(READABLE_LABELS[items])
+  labels[is.na(labels)] <- items[is.na(labels)]
+  paste0(labels, " (", toupper(items), ")")
+}
+safe_csv <- function(path) {
+  d <- read.csv(path, check.names = FALSE, stringsAsFactors = FALSE,
+                na.strings = c("", "NA", "NaN"), fileEncoding = "UTF-8-BOM")
+  if (!nrow(d) || nrow(d) > 200000L || ncol(d) > 1000L)
+    stop("Use a CSV with 1–200,000 rows and at most 1,000 columns.")
+  if (anyDuplicated(names(d)) || any(!nzchar(trimws(names(d)))))
+    stop("Column names must be nonempty and unique.")
+  d
+}
+help_box <- function(title, ...) tags$details(tags$summary(title), ...)
+lead <- function(k, title, text) div(class = "step-lead", div(class = "eyebrow", paste("STEP", k, "OF 4")), h2(title), p(text))
+next_btn <- function(id, text) actionButton(id, text, class = "btn-primary next-button")
+table_opts <- list(pageLength = 12, scrollX = TRUE, dom = "tip", order = list())
+display_estimates <- function(x, all = FALSE) {
+  out <- data.frame(Outcome = x$item, n = x$n, b = round(x$b, 4), SE = round(x$se, 4),
+    `95% interval` = paste0("[", fmt(x$ci_lo, 4), ", ", fmt(x$ci_hi, 4), "]"),
+    t = round(x$t, 3), p = signif(x$p, 4), check.names = FALSE)
+  if (all) out$Role <- ifelse(x$focal, "Focal", ifelse(x$in_neighborhood, "Neighbor", "Other"))
+  else out$`Unreported with larger |t|` <- x$n_unreported_larger_abs_t_neighborhood
+  if ("p_bonferroni_neighborhood" %in% names(x)) {
+    out$`p × boundary k` <- signif(x$p_bonferroni_neighborhood, 4)
+    out$`p × universe k` <- signif(x$p_bonferroni_universe, 4)
+  }
+  if (any(x$status != "ok")) out$Status <- x$status
+  out
+}
+
+ui <- fluidPage(title = "AMPPS EGA Explorer",
+  tags$head(tags$link(rel = "stylesheet", href = "app.css"), tags$script(src = "app.js")),
+  div(class = "masthead", div(div(class = "eyebrow", "AMPPS · POST-HOC MULTIVERSE ANALYSIS"),
+      h1("EGA Explorer"), p("Put reported findings in the context of what remains.")),
+      div(class = "local-badge", "Research preview", tags$small("Use public or synthetic data only"))),
+  uiOutput("run_status"),
+  tabsetPanel(id = "stage", type = "pills",
+    tabPanel("1 · Define", value = "define",
+      lead(1, "What can be compared?", "Define the analyzable outcomes and mark the findings you want to understand."),
+      fluidRow(column(4, div(class = "panel-card controls",
+        radioButtons("source_mode", "Start with", c("GSS worked example" = "demo", "My CSV data" = "upload")),
+        conditionalPanel("input.source_mode == 'demo'",
+          p("44 supplied GSS outcomes · 47 annual rows"),
+          p(class = "muted", "Model: outcome ~ MobilityLag + outcome's supplied lag. The relationship map uses archived respondent-level EGA outputs.")),
+        conditionalPanel("input.source_mode == 'upload'",
+          p(class = "muted", "In the hosted app, uploaded or pasted data are sent to the analysis server. Do not use confidential, identifiable, or restricted data. For those data, run a local copy instead."),
+          help_box("Try a synthetic dataset", p("Download these files, then upload the data below. Select X as predictor and Item01–Item12 as outcomes. The descriptions file is optional."),
+            downloadButton("download_example", "Example CSV"),
+            downloadButton("download_example_metadata", "Example descriptions")),
+          fileInput("data_csv", "Analysis data (.csv)", accept = ".csv"),
+          help_box("Or paste a CSV", textAreaInput("pasted_csv", "CSV text (header row required)", rows = 5, width = "100%"),
+            actionButton("load_paste", "Load pasted data")),
+          selectInput("predictor", "Numeric predictor", choices = character()),
+          selectizeInput("candidates", "Candidate outcomes", choices = character(), multiple = TRUE),
+          selectizeInput("covariates", "Shared numeric covariates (optional)", choices = character(), multiple = TRUE),
+          checkboxInput("own_lag", "Add each outcome's supplied lag column", FALSE),
+          conditionalPanel("input.own_lag", textInput("lag_suffix", "Lag-column suffix", "Lag")),
+          selectInput("missing", "Regression missingness", c("One common complete-case sample" = "common", "Complete cases for each outcome" = "per_outcome")),
+          selectInput("se_method", "Uncertainty estimate", c("Classical OLS" = "classical", "HC3 heteroskedasticity-robust" = "HC3")),
+          numericInput("min_n", "Minimum usable model rows per outcome", 10, min = 5, step = 1),
+          sliderInput("max_missing", "Maximum missing outcome fraction", min = 0, max = .9, value = .2, step = .05),
+          fileInput("network_csv", "Separate network data (optional .csv)", accept = ".csv"),
+          p(class = "muted", "Supply the same outcome column names. Otherwise the outcome columns of the analysis data build the map; the predictor never enters EGA."),
+          fileInput("metadata_csv", "Measure descriptions (optional .csv)", accept = ".csv"),
+          help_box("Metadata format", p("Columns: item, label, domain, respondent_scope, coding_note. Missing descriptions remain unclassified.")),
+          checkboxInput("bootstrap", "Estimate bootstrap stability and a typical network", FALSE),
+          conditionalPanel("input.bootstrap", selectInput("boot_iter", "Bootstrap replications", c(100, 500), selected = 100)),
+          numericInput("seed", "Network seed", 20260907, min = 1, max = 2147483646)),
+        actionButton("run", "Build analysis", class = "btn-primary run-button"),
+        p(class = "muted", "Changing analysis settings requires a new run. Changing focal measures or map boundaries reuses the same estimates."))),
+      column(8, div(class = "panel-card",
+        selectizeInput("focal", "Focal outcomes", choices = DEMO_ITEMS, selected = c("Happy", "Trust", "Fair"), multiple = TRUE),
+        p(class = "muted", "These may be reported findings or theory-selected outcomes. The label records their role, not when they were selected."),
+        textAreaInput("question", "Question or claim", "What do outcomes surrounding happiness, trust, and fairness add to the interpretation of residential mobility?", rows = 2, width = "100%"),
+        fluidRow(column(6, textInput("population", "Population / period", "GSS example · United States, 1972–2018")),
+                 column(6, textInput("analysis_unit", "Analysis unit", "Year (annual aggregate)"))),
+        textInput("network_unit", "Network-data unit", "Individual survey respondents (archived map)"),
+        textAreaInput("rationale", "Why these focal outcomes?", "Linked to the original study's theoretical model.", rows = 2, width = "100%"),
+        selectInput("timing", "Selection timing (your declaration)", c("Not documented here", "Before inspecting focal predictor results", "After inspecting some results", "Retrospective reconstruction"), selected = "Retrospective reconstruction"),
+        textInput("record", "Dated record or source (optional)", "")),
+        div(class = "panel-card", h3("Analyzable set"), uiOutput("scope_summary"), DTOutput("eligibility_table"),
+          help_box("What makes a fair comparison?", p("Eligibility uses data availability and coding, not whether a result is favorable. The same numeric regression specification is applied to every admitted outcome. You interpret conceptual and respondent differences in Step 4.")),
+          next_btn("to_map", "Explore the map →"))))),
+    tabPanel("2 · Map", value = "map",
+      lead(2, "What lies beside the focal outcomes?", "Use relationships among outcomes to organize alternatives before reading their predictor results."),
+      fluidRow(column(3, div(class = "panel-card controls",
+        selectInput("boundary", "Comparison boundary", c("Focal EGA communities" = "community", "Distance ring · 15%" = "ring15", "Distance ring · 25%" = "ring25", "Distance ring · 35%" = "ring35", "Full analyzable set" = "full")),
+        uiOutput("network_method"),
+        help_box("How boundaries are calculated", p("A community view includes all communities containing a focal outcome. Rings use the shortest path to the nearest focal outcome, with retained edge length 1/|r|. Cutoffs are the 15th, 25th and 35th percentiles of finite nonfocal distances (type 7); ties are retained. All three are exported."),
+          p("Map coordinates are for display. The ring rule uses graph paths, not distances on the screen.")),
+        next_btn("to_results", "View their results →"))),
+      column(9, div(class = "panel-card", plotlyOutput("network_plot", height = "570px"),
+        p(class = "figure-note", "Filled accent nodes: focal. Open accent nodes: current neighbors. Gray: other outcomes. Hover for labels and membership. Layout is fixed when boundaries change.")),
+        div(class = "panel-card", h3("Compare all boundaries"), uiOutput("boundary_notes"), DTOutput("boundary_table"),
+          p(class = "muted", "The fitted results stay fixed. These views change which alternatives are read together.")),
+        div(class = "panel-card", h3("Neighborhood and measurement details"), DTOutput("neighbor_table"))))),
+    tabPanel("3 · Results", value = "results",
+      lead(3, "What do the alternatives show?", "Read the fixed-model results alongside the EGA neighborhood, keeping each focal outcome visible."),
+      fluidRow(column(3, div(class = "panel-card controls",
+        radioButtons("result_scope", "Show", c("Current map boundary" = "local", "All analyzable outcomes" = "all")),
+        radioButtons("plot_metric", "Display", c("Compare statistical prominence |t|" = "abs_t", "Original signed t-statistic" = "t", "Estimate with 95% interval" = "b")),
+        checkboxInput("multiplicity", "Show optional Bonferroni sensitivity", FALSE),
+        help_box("Reading the display", p("Absolute t orders statistical prominence, not effect magnitude. Each outcome's estimate, uncertainty and sample size are available below. Raw outcome coding is retained; read the measurement notes before comparing substantive directions."),
+          p("Raw coefficients appear in separate panels with separate axes. Their intervals describe each estimate in its original outcome units.")),
+        conditionalPanel("input.multiplicity", p(class = "muted", "Two declared families are shown separately: the current boundary and the full analyzable set. These are regression p-value sensitivities, not selection verdicts. Valid individual tests and a justified family remain necessary.")),
+        downloadButton("download_plot", "Download result plot (PDF)"),
+        next_btn("to_interpret", "Interpret and report →"))),
+      column(9, conditionalPanel("input.plot_metric == 'abs_t'",
+        div(class="panel-card", id="reading_combined", h3("Read the neighborhood in two ways"),
+          p(class="reading-intro", "Left: compare statistical prominence. Right: read each estimate in its original units."),
+          uiOutput("combined_estimates"),
+          p(class="reading-intro", "Filled points mark focal outcomes; open points mark unreported alternatives. |t| compares an estimate with its standard error, not effect magnitude."),
+          p(class="reading-intro", "Coefficient signs retain the supplied coding. A negative coefficient means a lower numerical outcome score; its substantive meaning depends on that item's coding."))),
+        conditionalPanel("input.plot_metric != 'abs_t'", div(class = "panel-card", id = "prominence_panel",
+        h3("A · Read the selected result display"),
+        p(class = "reading-intro", "Signed t compares the estimate with its standard error. The coefficient view shows each estimate and interval on its own outcome scale."),
+        uiOutput("landscape_holder"),
+        p(class = "reading-intro", "The table below retains the original coefficients and intervals so that direction and uncertainty remain visible.")),
+        div(class = "panel-card", id = "coefficient_panel", h3("B · Read the estimates in their original units"),
+          p(class = "reading-intro", "The same outcomes, in the same order. Signs and intervals are retained; no outcomes have been reverse-coded."),
+          uiOutput("reading_estimates"),
+          p(class = "reading-intro", "A minus sign means a lower numerical outcome score, not automatically less of the named construct. Outcome coding and respondent groups must be checked before substantive directions are compared."))),
+        div(class = "panel-card", h3("Every focal outcome"), DTOutput("focal_table")),
+        uiOutput("input_sensitivity_panel"),
+        div(class = "panel-card", h3("Full estimates"), DTOutput("landscape_table"))))),
+    tabPanel("4 · Interpret & export", value = "interpret",
+      lead(4, "What do these comparisons add?", "Connect the reported findings to unreported outcomes, their measurement context, and the questions worth pursuing next."),
+      fluidRow(column(8, div(class = "panel-card", id="completed_comparison_panel", h3("From the EGA neighborhood to an interpretation"),
+          uiOutput("completed_comparison")),
+        div(class = "panel-card", h3("Every focal outcome remains in the record"), uiOutput("report_preview")),
+        div(class = "panel-card", h3("Explain a comparison"),
+          fluidRow(column(6, selectInput("annotation_focal", "Focal outcome", choices = c("Happy", "Trust", "Fair"))),
+                   column(6, selectInput("annotation_item", "Unreported alternative", choices = setdiff(DEMO_ITEMS, c("Happy", "Trust", "Fair"))))),
+          selectInput("relation", "Relation to this focal claim", c("Unclassified empirical neighbor" = "unclassified", "Related outcome / different scope" = "related", "Same-claim substitute (my justification)" = "substitute")),
+          textAreaInput("relation_reason", "Measurement or population justification", rows = 2, width = "100%"),
+          actionButton("save_annotation", "Save comparison note"), DTOutput("annotations_table")),
+        div(class = "panel-card", h3("Your interpretation"),
+          textAreaInput("interpretation", "What is supported, qualified, or newly suggested?", rows = 4, width = "100%", placeholder = "Describe what the alternatives add to each focal finding. Keep exploratory observations distinct from later confirmation."))),
+      column(4, div(class = "panel-card controls", h3("Take the analysis with you"),
+        p("Download the full estimates, every map boundary, measurement notes, analysis settings, network, and a readable report."),
+        checkboxInput("include_inputs", "Also include my uploaded input files in the ZIP", FALSE),
+        p(class = "muted", "Uploaded rows are excluded by default. Reproduction then requires your original files. The built-in aggregate example is included for reproducing that example."),
+        downloadButton("download_bundle", "Download reproducibility ZIP", class = "btn-primary"),
+        downloadButton("download_report", "Download readable report (.html)"),
+        downloadButton("download_csv", "Download all estimates (.csv)"),
+        help_box("What the record establishes", p("It records this app session, inputs and declared choices. It is not a preregistration or a tamper-proof record of past analyses. Empirical neighbors require your conceptual judgment; ranks do not identify how an author selected outcomes.")),
+        uiOutput("provenance_panel")))))
+  ),
+  div(class = "footer", paste("AMPPS EGA Explorer", APP_VERSION), span(" · Numeric linear models · EGA / TMFG / Walktrap"))
+)
+
+server <- function(input, output, session) {
+  rv <- reactiveValues(result = NULL, settings = NULL, error = NULL, upload = NULL,
+    network_upload = NULL, metadata_upload = NULL, inputs = list(), events = list(),
+    annotations = data.frame(focal = character(), item = character(), relation = character(), reason = character()),
+    source_id = "bundled_gss", network_id = "", metadata_id = "", upload_label = "My data")
+  log_event <- function(action, detail = "") {
+    rv$events <- append(isolate(rv$events), list(list(time_utc = format(Sys.time(), tz = "UTC", usetz = TRUE), action = action, detail = detail)))
+  }
+  config <- reactive({
+    if (input$source_mode == "demo") return(list(source = "demo"))
+    list(source = "upload", source_id = rv$source_id, network_id = rv$network_id, metadata_id = rv$metadata_id,
+      predictor = input$predictor, candidates = input$candidates, covariates = input$covariates %or% character(),
+      own_lag = isTRUE(input$own_lag), lag_suffix = input$lag_suffix %or% "Lag",
+      missing = input$missing, se_method = input$se_method, min_n = input$min_n,
+      max_missing = input$max_missing, bootstrap = isTRUE(input$bootstrap),
+      iter = as.integer(input$boot_iter %or% 100), seed = as.integer(input$seed))
+  })
+  dirty <- reactive(!identical(config(), rv$settings))
+  result <- reactive({
+    validate(need(!is.null(rv$result), "Load data and build an analysis to continue."),
+             need(is.null(rv$error), "The current run has an error. Resolve it in Step 1 before using or exporting results."),
+             need(!dirty(), "Settings changed. Return to Step 1 and build the analysis before using these results."))
+    rv$result
+  })
+  outcome_labels <- function(items) {
+    a <- result()
+    if (identical(rv$settings$source, "demo")) return(readable_label(items))
+    labels <- as.character(a$metadata$label[match(items, a$metadata$item)])
+    if (length(labels) != length(items)) return(items)
+    missing_label <- is.na(labels) | !nzchar(trimws(labels)) | labels == items
+    labels[missing_label] <- items[missing_label]
+    ifelse(missing_label, items, paste0(labels, " (", items, ")"))
+  }
+  focal <- reactive({
+    a <- result()
+    f <- intersect(input$focal %or% character(), a$measures)
+    validate(need(length(f) > 0, "Select at least one focal outcome in Step 1."))
+    f
+  })
+  neighborhoods <- reactive(compare_neighborhoods(result()$network, focal()))
+  neighborhood <- reactive({
+    if (identical(input$boundary, "full")) result()$measures else neighborhoods()$sets[[input$boundary %or% "community"]]
+  })
+  reports <- reactive(make_report_tables(result()$landscape, focal(), neighborhood(), result()$metadata,
+                                          multiplicity = isTRUE(input$multiplicity)))
+  active_annotations <- reactive({
+    a <- result(); x <- rv$annotations
+    x[x$focal %in% focal() & x$item %in% a$measures & !x$item %in% focal(), , drop = FALSE]
+  })
+  reset_comparison_editor <- function() {
+    updateSelectInput(session, "relation", selected = "unclassified")
+    updateTextAreaInput(session, "relation_reason", value = "")
+    updateCheckboxInput(session, "include_inputs", value = FALSE)
+  }
+  load_demo <- function() {
+    led <- audit_universe(DEMO$data, DEMO_ITEMS, "MobilityLag", own_lag = TRUE, max_missing = .2)
+    ls <- fit_landscape(DEMO$data, DEMO_ITEMS, "MobilityLag", own_lag = TRUE, missing = "common")
+    rv$result <- list(data = DEMO$data, landscape = ls, network = DEMO_NETWORK, metadata = DEMO$metadata,
+      measures = DEMO_ITEMS, eligibility = led, label = "GSS worked example", provenance = DEMO$provenance,
+      input_provenance = audit_input_provenance(DEMO$data, DEMO_SOURCES, DEMO_ITEMS,
+        "MobilityLag", own_lag = TRUE, missing = "common", primary = ls),
+      model = list(predictor = "MobilityLag", covariates = character(), own_lag = TRUE, lag_suffix = "Lag", missing = "common", se_method = "classical"))
+    rv$settings <- list(source = "demo"); rv$error <- NULL
+    rv$annotations <- data.frame(focal = character(), item = character(), relation = character(), reason = character())
+    reset_comparison_editor()
+    updateSelectizeInput(session, "focal", choices = setNames(DEMO_ITEMS, DEMO_ITEMS), selected = c("Happy", "Trust", "Fair"))
+    updateTextInput(session, "population", value = "GSS example · United States, 1972–2018")
+    updateTextInput(session, "analysis_unit", value = "Year (annual aggregate)")
+    updateTextInput(session, "network_unit", value = "Individual survey respondents (archived map)")
+    updateTextAreaInput(session, "question", value = "What do outcomes surrounding happiness, trust, and fairness add to the interpretation of residential mobility?")
+    updateTextAreaInput(session, "rationale", value = "Linked to the original study's theoretical model.")
+    updateTextAreaInput(session, "interpretation", value = "")
+    updateTextInput(session, "record", value = "")
+    updateSelectInput(session, "timing", selected = "Retrospective reconstruction")
+    log_event("loaded_example", "Live annual-model fits; archived respondent EGA")
+  }
+  load_demo()
+  observeEvent(input$source_mode, {
+    if (input$source_mode == "demo") load_demo() else {
+      rv$annotations <- data.frame(focal = character(), item = character(), relation = character(), reason = character())
+      reset_comparison_editor()
+      updateTextAreaInput(session, "question", value = "")
+      updateTextAreaInput(session, "rationale", value = "")
+      updateTextAreaInput(session, "interpretation", value = "")
+      updateTextInput(session, "record", value = "")
+      updateTextInput(session, "population", value = "Not supplied")
+      updateTextInput(session, "analysis_unit", value = "Not supplied")
+      updateTextInput(session, "network_unit", value = "Same input rows unless a separate network file is supplied")
+      updateSelectInput(session, "timing", selected = "Not documented here")
+      if (!is.null(rv$upload)) updateSelectizeInput(session, "focal", choices = input$candidates, selected = head(input$candidates, 1))
+    }
+  }, ignoreInit = TRUE)
+  handle_analysis_upload <- function(file) {
+    reset_comparison_editor()
+    tryCatch({
+      d <- safe_csv(file$datapath); rv$upload <- d; rv$upload_label <- file$name
+      rv$network_upload <- NULL; rv$metadata_upload <- NULL
+      rv$network_id <- ""; rv$metadata_id <- ""; rv$inputs <- list()
+      session$sendCustomMessage("resetOptionalFiles", c("network_csv", "metadata_csv"))
+      rv$source_id <- unname(tools::md5sum(file$datapath))
+      rv$inputs$analysis <- file$datapath
+      nums <- names(d)[vapply(d, is.numeric, logical(1))]
+      if (length(nums) < 5L) stop("Provide a numeric predictor and at least four numeric candidate outcomes.")
+      pred <- if ("X" %in% nums) "X" else nums[1]
+      cand <- setdiff(nums, c(pred, "year", "Year", "id", "ID", nums[endsWith(nums, "Lag")]))
+      updateSelectInput(session, "predictor", choices = nums, selected = pred)
+      updateSelectizeInput(session, "candidates", choices = nums, selected = cand)
+      updateSelectizeInput(session, "covariates", choices = nums, selected = character())
+      updateSelectizeInput(session, "focal", choices = cand, selected = head(cand, 1))
+      updateTextInput(session, "population", value = "Not supplied")
+      updateTextInput(session, "analysis_unit", value = "Not supplied")
+      updateTextInput(session, "network_unit", value = "Same input rows unless a separate network file is supplied")
+      updateTextAreaInput(session, "question", value = "")
+      updateTextAreaInput(session, "rationale", value = "")
+      updateTextAreaInput(session, "interpretation", value = "")
+      updateTextInput(session, "record", value = "")
+      updateSelectInput(session, "timing", selected = "Not documented here")
+      rv$annotations <- rv$annotations[FALSE, ]; rv$error <- NULL
+      log_event("analysis_file_loaded", file$name)
+    }, error = function(e) {rv$upload <- NULL; rv$source_id <- paste("invalid", Sys.time()); rv$error <- conditionMessage(e)})
+  }
+  observeEvent(input$data_csv, handle_analysis_upload(input$data_csv))
+  observeEvent(input$load_paste, {
+    req(input$pasted_csv)
+    if (nchar(input$pasted_csv, type = "bytes") > 5 * 1024^2) {rv$error <- "Pasted CSV is limited to 5 MB; use file upload for larger data."; return()}
+    path <- tempfile("ampps_pasted_", fileext = ".csv")
+    writeLines(input$pasted_csv, path, useBytes = TRUE)
+    session$onSessionEnded(function() unlink(path))
+    handle_analysis_upload(list(datapath = path, name = "Pasted CSV"))
+  })
+  observeEvent(input$network_csv, {
+    updateCheckboxInput(session, "include_inputs", value = FALSE)
+    tryCatch({rv$network_upload <- safe_csv(input$network_csv$datapath)
+      rv$network_id <- unname(tools::md5sum(input$network_csv$datapath)); rv$inputs$network <- input$network_csv$datapath
+      log_event("network_file_loaded", input$network_csv$name)
+    }, error = function(e) {rv$network_upload <- NULL; rv$network_id <- "invalid"; rv$error <- conditionMessage(e)})
+  })
+  observeEvent(input$metadata_csv, {
+    updateCheckboxInput(session, "include_inputs", value = FALSE)
+    tryCatch({d <- safe_csv(input$metadata_csv$datapath)
+      if (!("item" %in% names(d)) || anyDuplicated(d$item)) stop("Metadata needs a unique item column.")
+      rv$metadata_upload <- d; rv$metadata_id <- unname(tools::md5sum(input$metadata_csv$datapath))
+      rv$inputs$metadata <- input$metadata_csv$datapath
+    }, error = function(e) {rv$metadata_upload <- NULL; rv$metadata_id <- "invalid"; rv$error <- conditionMessage(e)})
+  })
+  observeEvent(input$run, {
+    tryCatch({
+      if (input$source_mode == "demo") {load_demo(); return()}
+      req(rv$upload)
+      cf <- config(); d <- rv$upload
+      if (rv$network_id == "invalid" || rv$metadata_id == "invalid") stop("Replace the invalid optional CSV before running.")
+      if (length(cf$candidates) < 4L || length(cf$candidates) > 200L) stop("Select 4–200 candidate outcomes for EGA.")
+      if (cf$predictor %in% cf$candidates || any(cf$covariates %in% cf$candidates)) stop("Predictor and covariates must be separate from outcome candidates.")
+      withProgress(message = "Building the outcome comparison", value = 0, {
+        led <- audit_universe(d, cf$candidates, cf$predictor, cf$covariates, cf$min_n, cf$max_missing, cf$own_lag, cf$lag_suffix)
+        ms <- led$item[led$included]
+        if (length(ms) < 4) stop("Fewer than four outcomes pass eligibility. Review coding, missingness and lag columns.")
+        excluded_focal <- setdiff(input$focal %or% character(), ms)
+        if (length(excluded_focal)) stop("A selected focal outcome is not eligible: ", paste(excluded_focal, collapse = ", "), ". Review eligibility or explicitly select another focal outcome.")
+        incProgress(.1, "Fitting the common model")
+        ls <- fit_landscape(d, ms, cf$predictor, cf$covariates, cf$own_lag, cf$lag_suffix, cf$missing, cf$se_method)
+        incProgress(.15, if (cf$bootstrap) "Bootstrapping the outcome network" else "Estimating the outcome network")
+        nd <- rv$network_upload %or% d
+        net <- compute_ega(nd, ms, bootstrap = cf$bootstrap, iter = cf$iter, seed = cf$seed)
+        meta <- rv$metadata_upload
+        if (is.null(meta)) meta <- data.frame(item = ms, label = ms, domain = "Not supplied", respondent_scope = "Not supplied", coding_note = "As supplied; direction not independently verified")
+        rv$result <- list(data = d, landscape = ls, network = net, metadata = meta, measures = ms,
+          eligibility = led, label = rv$upload_label, provenance = "User-supplied CSV; no imputation. Source and selection descriptions are user declarations.",
+          model = cf[c("predictor", "covariates", "own_lag", "lag_suffix", "missing", "se_method")])
+        rv$settings <- cf; rv$error <- NULL
+        sel <- intersect(isolate(input$focal), ms); if (!length(sel)) sel <- head(ms, 1)
+        updateSelectizeInput(session, "focal", choices = ms, selected = sel)
+        incProgress(.75, "Ready")
+      })
+      log_event("analysis_built", paste(length(rv$result$measures), "outcomes"))
+    }, error = function(e) {rv$error <- conditionMessage(e); showNotification(conditionMessage(e), type = "error", duration = NULL)})
+  })
+  observeEvent(input$to_map, updateTabsetPanel(session, "stage", selected = "map"))
+  observeEvent(input$to_results, updateTabsetPanel(session, "stage", selected = "results"))
+  observeEvent(input$to_interpret, updateTabsetPanel(session, "stage", selected = "interpret"))
+  observeEvent(input$boundary, log_event("boundary_view", input$boundary), ignoreInit = TRUE)
+  observeEvent(input$focal, log_event("focal_view", paste(input$focal, collapse = ", ")), ignoreInit = TRUE)
+  observe({
+    f <- focal(); a <- result(); al <- setdiff(neighborhood(), f)
+    old_focal <- isolate(input$annotation_focal)
+    if (!((old_focal %or% "") %in% f)) old_focal <- head(f, 1)
+    updateSelectInput(session, "annotation_focal", choices = f, selected = old_focal)
+    old <- isolate(input$annotation_item); if (!((old %or% "") %in% al)) old <- head(al, 1)
+    updateSelectInput(session, "annotation_item", choices = al, selected = old)
+  })
+  observeEvent(list(input$annotation_focal, input$annotation_item), {
+    req(input$annotation_focal, input$annotation_item)
+    x <- rv$annotations
+    row <- x[x$focal == input$annotation_focal & x$item == input$annotation_item, , drop = FALSE]
+    updateSelectInput(session, "relation", selected = if (nrow(row)) row$relation[1] else "unclassified")
+    updateTextAreaInput(session, "relation_reason", value = if (nrow(row)) row$reason[1] else "")
+  }, ignoreInit = TRUE)
+  observeEvent(input$save_annotation, {
+    req(input$annotation_focal, input$annotation_item)
+    if (!(input$annotation_focal %in% focal()) || !(input$annotation_item %in% setdiff(neighborhood(), focal()))) {
+      showNotification("Choose a current focal outcome and an unreported alternative from this boundary.", type = "warning"); return()
+    }
+    if (input$relation == "substitute" && !nzchar(trimws(input$relation_reason))) {
+      showNotification("Add a measurement/population justification for a same-claim substitute.", type = "warning"); return()
+    }
+    row <- data.frame(focal = input$annotation_focal, item = input$annotation_item, relation = input$relation, reason = input$relation_reason)
+    keep <- !(rv$annotations$focal == row$focal & rv$annotations$item == row$item)
+    rv$annotations <- rbind(rv$annotations[keep, , drop = FALSE], row)
+    log_event("comparison_note", paste(row$focal, row$item, row$relation))
+    showNotification("Comparison note saved.", type = "message")
+  })
+
+  output$run_status <- renderUI({
+    if (!is.null(rv$error)) return(div(class = "status error", strong("Cannot complete this run. "), rv$error))
+    if (dirty()) return(div(class = "status pending", "Settings have changed. Build the analysis in Step 1; previous results are withheld."))
+    div(class = "status ready", strong(rv$result$label), " · ", length(rv$result$measures), " outcomes · ",
+        if (rv$settings$source == "demo") "Archived EGA + live model fits" else if (isTRUE(rv$settings$bootstrap)) "New bootstrap EGA + model fits" else "New EGA preview + model fits", " · Ready")
+  })
+  output$scope_summary <- renderUI({a <- result(); p(paste(sum(a$eligibility$included), "outcomes included."),
+    paste(sum(!a$eligibility$included), "excluded by recorded eligibility criteria."))})
+  output$eligibility_table <- renderDT(datatable(result()$eligibility, rownames = FALSE, options = table_opts))
+  output$network_method <- renderUI({n <- result()$network
+    tagList(p(strong(if (rv$settings$source == "demo") "Archived GSS EGA" else if (isTRUE(rv$settings$bootstrap)) "Bootstrap EGA · typical network" else "EGA preview · no bootstrap")),
+      p(class = "muted", "Outcome relationships define this map. Focal predictor results appear in the next step."),
+      help_box("Network source and stability", p(n$method), p(paste(n$provenance, collapse = " ")),
+        if (length(n$warnings)) p(paste(n$warnings, collapse = " "))))})
+  output$boundary_notes <- renderUI({
+    nb <- neighborhoods()
+    tagList(p(class = "muted", "Each cutoff uses the finite nonfocal distances to the nearest focal outcome; ties stay together."),
+      if (length(nb$warnings)) p(class = "notice", paste(nb$warnings, collapse = " ")))
+  })
+  output$boundary_table <- renderDT({
+    nb <- neighborhoods(); a <- result(); allsets <- nb$sets
+    rows <- lapply(names(allsets), function(nm) {
+      m <- allsets[[nm]]; base <- allsets$community
+      cut <- nb$summary$cutoff[nb$summary$boundary == nm]
+      pool <- nb$summary$pool_n[nb$summary$boundary == nm]
+      data.frame(Boundary = nm, Outcomes = length(m), Cutoff = if (length(cut)) fmt(cut, 5) else "—",
+        Distance_pool = if (length(pool)) pool else NA_integer_,
+        Added_to_community = paste(setdiff(m, base), collapse = ", "),
+        Outside_this_view = paste(setdiff(base, m), collapse = ", "))
+    })
+    datatable(do.call(rbind, rows), rownames = FALSE, options = modifyList(table_opts, list(paging = FALSE)))
+  })
+  output$neighbor_table <- renderDT({
+    a <- result(); ms <- neighborhood()
+    x <- data.frame(item = ms, focal = ms %in% focal(), community = unname(a$network$membership[ms]),
+                    distance = unname(neighborhoods()$distances[ms]))
+    x <- merge(x, a$metadata, by = "item", all.x = TRUE, sort = FALSE)
+    if (!is.null(a$network$stability)) x <- merge(x, a$network$stability, by = "item", all.x = TRUE, sort = FALSE)
+    datatable(x, rownames = FALSE, options = table_opts) %>% formatRound(intersect(c("distance", "stability"), names(x)), 3)
+  })
+  output$network_plot <- renderPlotly({
+    a <- result(); net <- a$network; ids <- colnames(net$adjacency); xy <- net$coordinates[ids, , drop = FALSE]
+    ed <- which(upper.tri(net$adjacency) & abs(net$adjacency) > 0, arr.ind = TRUE)
+    ex <- as.vector(t(cbind(xy[ed[,1],1], xy[ed[,2],1], NA_real_)))
+    ey <- as.vector(t(cbind(xy[ed[,1],2], xy[ed[,2],2], NA_real_)))
+    role <- ifelse(ids %in% focal(), "Focal", ifelse(ids %in% neighborhood(), "Neighbor", "Other"))
+    labels <- a$metadata$label[match(ids, a$metadata$item)]; labels[is.na(labels)] <- ids[is.na(labels)]
+    hover <- paste0(htmltools::htmlEscape(ids), " · ", htmltools::htmlEscape(labels), "<br>Community ", net$membership[ids], "<br>", role)
+    p <- plot_ly(source = "network", type = "scatter", mode = "lines", x = ex, y = ey,
+      line = list(color = "#d2dbdd", width = .65), hoverinfo = "skip", showlegend = FALSE)
+    p <- add_trace(p, x = xy[,1], y = xy[,2], type = "scatter", mode = "markers+text", inherit = FALSE,
+      marker = list(size = ifelse(role == "Focal", 19, ifelse(role == "Neighbor", 13, 9)),
+        color = ifelse(role == "Focal", ACCENT, ifelse(role == "Neighbor", "#eef7f7", "#ced5d6")),
+        line = list(color = ifelse(role == "Other", "#bcc8ca", ACCENT), width = 1.5)),
+      text = ifelse(role != "Other", ids, ""), textposition = "top center", textfont = list(size = 11, color = "#284951"),
+      customdata = ids, hovertext = hover, hoverinfo = "text", showlegend = FALSE)
+    layout(p, xaxis = list(visible = FALSE), yaxis = list(visible = FALSE, scaleanchor = "x"),
+      margin = list(l = 15, r = 15, b = 15, t = 25), paper_bgcolor = "white", plot_bgcolor = "white", dragmode = "pan") %>%
+      plotly::config(displaylogo = FALSE, modeBarButtonsToRemove = c("select2d", "lasso2d"))
+  })
+  plot_data <- reactive({
+    a <- result(); x <- a$landscape
+    if (input$result_scope == "local") x <- x[x$item %in% neighborhood(), , drop = FALSE]
+    x <- x[is.finite(x$t), , drop = FALSE]
+    x <- x[order(abs(x$t)), , drop = FALSE]; x$item_display <- factor(x$item, levels = x$item)
+    x$readable_display <- factor(outcome_labels(x$item), levels = outcome_labels(x$item))
+    x$role <- factor(ifelse(x$item %in% focal(), "Focal", "Unreported alternative"), levels = c("Focal", "Unreported alternative"))
+    x$hover <- paste0(htmltools::htmlEscape(x$item), "<br>b = ", fmt(x$b, 4), "; SE = ", fmt(x$se, 4),
+      "<br>95% interval [", fmt(x$ci_lo, 4), ", ", fmt(x$ci_hi, 4), "]<br>t = ", fmt(x$t), "; p = ", fmt(x$p, 5), "<br>n = ", x$n)
+    x
+  })
+  result_ggplot <- reactive({
+    x <- plot_data(); validate(need(nrow(x), "No estimable results in this view."))
+    if (input$plot_metric == "b") {
+      g <- ggplot(x, aes(y = 0, color = role)) + geom_vline(xintercept = 0, color = "#aebabb", linewidth = .4) +
+        geom_segment(aes(x = ci_lo, xend = ci_hi, yend = 0), linewidth = .65) +
+        geom_point(aes(x = b, text = hover), size = 2.7) + facet_wrap(~item_display, scales = "free_x", ncol = 2) +
+        scale_y_continuous(breaks = NULL) + labs(x = "Estimate and individual 95% interval · separate axes, original units")
+    } else if (input$plot_metric == "abs_t") g <- ggplot(x, aes(y = readable_display, color = role)) +
+      geom_segment(aes(x = 0, xend = abs(t), yend = readable_display), color = "#d8e1e2", linewidth = .45) +
+      geom_point(aes(x = abs(t), text = hover, shape = role), size = 3.2, stroke = 1.2) +
+      scale_shape_manual(values = c("Focal" = 16, "Unreported alternative" = 1)) +
+      scale_x_continuous(limits = c(0, NA), expand = expansion(mult = c(.01, .08))) +
+      labs(x = "Absolute t-statistic |t| · statistical prominence", shape = NULL)
+    else g <- ggplot(x, aes(y = readable_display, color = role)) + geom_vline(xintercept = 0, color = "#aebabb", linewidth = .4) +
+      geom_point(aes(x = t, text = hover), size = 2.8) + labs(x = "Signed t-statistic · ordered by absolute t")
+    g + scale_color_manual(values = c("Focal" = ACCENT, "Unreported alternative" = "#778b91")) +
+      labs(y = NULL, color = NULL) + theme_minimal(base_size = 12) +
+      theme(panel.grid.major.y = element_blank(), panel.grid.minor = element_blank(), legend.position = "bottom",
+            plot.margin = margin(12, 20, 12, 8), axis.text.y = element_text(color = "#213f48"))
+  })
+  output$landscape_holder <- renderUI({
+    n <- nrow(plot_data())
+    height <- if (input$plot_metric == "b") max(440, ceiling(n / 2) * 140) else max(460, n * 23 + 80)
+    plotlyOutput("landscape_plot", height = paste0(height, "px"))
+  })
+  output$landscape_plot <- renderPlotly(ggplotly(result_ggplot(), tooltip = "text") %>% plotly::config(displaylogo = FALSE))
+  output$combined_estimates <- renderUI({
+    x <- plot_data(); x <- x[rev(seq_len(nrow(x))), , drop=FALSE]
+    validate(need(nrow(x), "No estimable results in this view."))
+    upper <- max(1, ceiling(max(abs(x$t), na.rm=TRUE)))
+    dot <- function(value, focal_flag) {
+      pos <- 5 + 130 * abs(value)/upper
+      htmltools::HTML(sprintf('<svg viewBox="0 0 142 24" width="142" height="24" aria-label="absolute t %.2f"><line x1="5" y1="12" x2="135" y2="12" stroke="#c7d2d5" stroke-width="1"/><circle cx="%.2f" cy="12" r="4.3" fill="%s" stroke="#24545f" stroke-width="1.7"/></svg>', abs(value),pos,if(focal_flag) "#24545f" else "white"))
+    }
+    tags$table(class="reading-table combined-table",tags$thead(
+      tags$tr(tags$th("Outcome"),tags$th(paste0("|t|: 0 to ",upper)),tags$th("|t|"),tags$th("Coefficient b"),tags$th("95% interval"))),
+      tags$tbody(lapply(seq_len(nrow(x)), function(i) tags$tr(class=if(x$item[i]%in%focal()) "focal-reading" else "",
+        tags$td(outcome_labels(x$item[i])), tags$td(dot(x$t[i],x$item[i]%in%focal())),tags$td(fmt(abs(x$t[i]),2)),
+        tags$td(fmt(x$b[i],4)),tags$td(paste0("[",fmt(x$ci_lo[i],4),", ",fmt(x$ci_hi[i],4),"]"))))))
+  })
+  output$reading_estimates <- renderUI({
+    x <- plot_data(); x <- x[rev(seq_len(nrow(x))), , drop=FALSE]
+    tags$table(class="reading-table", tags$thead(tags$tr(tags$th("Outcome"), tags$th("Role"),
+      tags$th("Coefficient b"), tags$th("95% interval"), tags$th("Original t"))),
+      tags$tbody(lapply(seq_len(nrow(x)), function(i) tags$tr(
+        tags$td(outcome_labels(x$item[i])), tags$td(as.character(x$role[i])),
+        tags$td(fmt(x$b[i],4)), tags$td(paste0("[",fmt(x$ci_lo[i],4),", ",fmt(x$ci_hi[i],4),"]")),
+        tags$td(fmt(x$t[i],2))))))
+  })
+  output$completed_comparison <- renderUI({
+    a <- result(); selected <- unique(c(focal(), active_annotations()$item))
+    x <- a$landscape[a$landscape$item %in% selected, , drop=FALSE]
+    tags$div(
+      p(class="reading-intro", paste0("Current neighborhood: ", length(neighborhood()), " outcomes; ", length(focal()), " focal outcomes.")),
+      tags$table(class="reading-table", tags$thead(tags$tr(tags$th("Outcome"), tags$th("Role"), tags$th("|t|"), tags$th("95% interval"))),
+        tags$tbody(lapply(seq_len(nrow(x)), function(i) tags$tr(tags$td(outcome_labels(x$item[i])),
+          tags$td(if (x$item[i] %in% focal()) "Focal" else if (x$item[i] %in% neighborhood()) "Unreported neighbor" else "Other unreported alternative"),
+          tags$td(fmt(abs(x$t[i]),2)), tags$td(paste0("[",fmt(x$ci_lo[i],4),", ",fmt(x$ci_hi[i],4),"]")))))),
+      h4("Measurement comparison (researcher's note)"),
+      if (nrow(active_annotations())) tagList(lapply(seq_len(nrow(active_annotations())), function(i) {
+        z <- active_annotations()[i,]; p(paste0(toupper(z$focal)," / ",toupper(z$item),": ",z$reason))
+      })) else p(class="muted","Choose an alternative and save its measurement context below."),
+      h4("What the comparison adds (researcher's interpretation)"),
+      if (nzchar(trimws(input$interpretation %or% ""))) p(class="completed-interpretation", input$interpretation) else
+        p(class="muted", "Write the interpretation below; it will appear here and in the exported report."))
+  })
+  output$focal_table <- renderDT(datatable(display_estimates(reports()$focal), rownames = FALSE, options = modifyList(table_opts, list(paging = FALSE))))
+  output$download_example <- downloadHandler(filename = function() "ega_upload_example.csv",
+    content = function(file) file.copy(file.path("examples", "upload_example.csv"), file, overwrite = TRUE))
+  output$download_example_metadata <- downloadHandler(filename = function() "ega_example_descriptions.csv",
+    content = function(file) file.copy(file.path("examples", "metadata_example.csv"), file, overwrite = TRUE))
+  output$landscape_table <- renderDT(datatable(display_estimates(reports()$all, all = TRUE), rownames = FALSE, options = modifyList(table_opts, list(dom = "ftip"))))
+  output$input_sensitivity_panel <- renderUI({
+    audit <- result()[["input_provenance"]]
+    if (is.null(audit)) return(NULL)
+    div(class = "panel-card", help_box("Annual input sensitivity · GSS example",
+      p("The primary comparison keeps the supplied annual inputs fixed. This separate check uses only rows whose current outcome was recovered from a survey extract."),
+      p("Inherited one-year lag values can remain. Row counts describe provenance, not effective sample size; this is not a correction for serial dependence or interpolation uncertainty."),
+      DTOutput("input_sensitivity_table"),
+      p(class = "muted", "All 44 outcomes, exact source counts, and a script to reproduce this check are included in the GSS export. Bonferroni columns appear here when the optional check is selected.")))
+  })
+  output$input_sensitivity_table <- renderDT({
+    audit <- result()[["input_provenance"]]; req(audit)
+    ms <- focal()
+    block <- function(x, label, restricted = FALSE) {
+      x <- x[match(ms, x$item), , drop = FALSE]
+      info <- audit$summary[match(ms, audit$summary$item), , drop = FALSE]
+      tab <- data.frame(Outcome = x$item, Inputs = label, n = x$n,
+        `Inherited own-lags` = if (restricted) info$restricted_own_lag_carried_n else info$primary_own_lag_carried_n,
+        b = round(x$b, 5), `95% interval` = paste0("[", fmt(x$ci_lo, 5), ", ", fmt(x$ci_hi, 5), "]"),
+        p = signif(x$p, 4), check.names = FALSE)
+      if (isTRUE(input$multiplicity)) tab$`p × universe k` <- signif(x$p_bonferroni_universe, 4)
+      tab
+    }
+    datatable(rbind(block(audit$current_landscape, "Supplied"),
+                    block(audit$restricted_landscape, "Current-outcome extract", TRUE)),
+      rownames = FALSE, options = modifyList(table_opts, list(paging = FALSE)))
+  })
+  output$annotations_table <- renderDT(datatable(active_annotations(), rownames = FALSE, options = list(dom = "t", scrollX = TRUE)))
+
+  report_text <- reactive({
+    a <- result(); ls <- a$landscape; nb <- neighborhood(); fs <- focal()
+    txt <- c("# AMPPS outcome-comparison record", "", paste("Dataset:", a$label),
+      paste("Question:", input$question), paste("Population / period:", input$population),
+      paste("Analysis unit:", input$analysis_unit), paste("Network unit:", input$network_unit), "",
+      paste("We estimated", length(a$measures), "outcomes with predictor", a$model$predictor,
+        if (length(a$model$covariates)) paste("and covariates", paste(a$model$covariates, collapse = ", ")) else "",
+        if (isTRUE(a$model$own_lag)) "plus each outcome's supplied lag." else "with an intercept."),
+      paste("Missingness:", a$model$missing, "; uncertainty:", a$model$se_method, "."),
+      paste("The", input$boundary, "view contains", length(nb), "outcomes; focal outcomes:", paste(fs, collapse = ", "), "."),
+      paste("Map:", a$network$method), "", "## What the comparison shows", "")
+    peers <- ls[ls$item %in% setdiff(nb, fs) & is.finite(ls$t), , drop = FALSE]
+    for (f in fs) {
+      r <- ls[ls$item == f, , drop = FALSE]
+      if (!nrow(r) || !is.finite(r$t)) {txt <- c(txt, paste("-", f, ": model not estimable; see status in results CSV.")); next}
+      higher <- peers$item[abs(peers$t) > abs(r$t)]
+      excludes <- r$ci_lo > 0 || r$ci_hi < 0
+      txt <- c(txt, paste0("- ", f, ": b = ", fmt(r$b, 4), ", SE = ", fmt(r$se, 4), ", 95% interval [", fmt(r$ci_lo, 4), ", ", fmt(r$ci_hi, 4),
+        "], t = ", fmt(r$t), ", p = ", fmt(r$p, 5), ", n = ", r$n, ". The interval ", if (excludes) "excludes" else "includes", " zero. ",
+        length(higher), if (length(higher) == 1L) " unreported outcome in this view has larger absolute t" else " unreported outcomes in this view have larger absolute t", if (length(higher)) paste0(": ", paste(higher, collapse = ", ")) else "", "."))
+    }
+    txt <- c(txt, "", "These are the observed estimates in the stated analysis. Raw coding is retained; absolute t describes statistical prominence, not effect magnitude or the selection process.",
+      "", "## Boundary comparison", "The regression estimates are unchanged across these views.")
+    sets <- neighborhoods()$sets
+    for (nm in names(sets)) txt <- c(txt, paste0("- ", nm, " (", length(sets[[nm]]), "): ", paste(sets[[nm]], collapse = ", ")))
+    if (isTRUE(input$multiplicity)) txt <- c(txt, "", "Optional Bonferroni sensitivities are provided for the named current boundary and the full analyzable set. They do not correct coefficient inflation or validate the model/family.")
+    audit <- a[["input_provenance"]]
+    if (!is.null(audit)) {
+      txt <- c(txt, "", "## Annual input sensitivity (separate from the outcome comparison)",
+        "The primary estimates above use the supplied annual inputs. The following refits retain only primary rows whose current outcome is labeled extract; supplied predictor and one-year lag values are unchanged.")
+      for (f in fs) {
+        r <- audit$restricted_landscape[audit$restricted_landscape$item == f, , drop = FALSE]
+        counts <- audit$summary[audit$summary$item == f, , drop = FALSE]
+        txt <- c(txt, paste0("- ", f, ": ", counts$restricted_n, " of ", counts$primary_n,
+          " primary rows retained; ", counts$restricted_own_lag_carried_n, " inherited own-lag values remain. ",
+          "b = ", fmt(r$b, 5), ", 95% interval [", fmt(r$ci_lo, 5), ", ", fmt(r$ci_hi, 5), "]; p = ", fmt(r$p, 6),
+          if (isTRUE(input$multiplicity)) paste0("; p × ", r$bonferroni_universe_k, " = ", fmt(r$p_bonferroni_universe, 4)) else "", "."))
+      }
+      txt <- c(txt, "These are provenance counts, not effective sample sizes. This input restriction can change the fitted years and results; it does not correct serial dependence or inherited-input uncertainty.")
+    }
+    anns <- active_annotations()
+    txt <- c(txt, "", "## Measurement comparisons (user annotations)")
+    if (!nrow(anns)) txt <- c(txt, "No conceptual substitutes have been certified. Empirical neighbors remain unclassified unless a comparison is recorded.")
+    else for (i in seq_len(nrow(anns))) txt <- c(txt, paste0("- ", anns$focal[i], " / ", anns$item[i], " — ", anns$relation[i], ": ", anns$reason[i]))
+    c(txt, "", "## Interpretation (user declaration)", input$interpretation %or% "", "", "## Selection and source record",
+      paste("Rationale:", input$rationale), paste("Timing declaration:", input$timing), paste("Record:", input$record),
+      paste(a$provenance, collapse = " "), "", paste("App version:", APP_VERSION),
+      "This is a record of the present analysis, not a preregistration or a reconstruction of all past analysis choices.")
+  })
+  report_html <- reactive({
+    txt <- report_text()
+    blocks <- lapply(txt, function(s) {
+      if (startsWith(s, "# ")) tags$h1(substring(s, 3)) else if (startsWith(s, "## ")) tags$h2(substring(s, 4))
+      else if (nzchar(s)) tags$p(s) else NULL
+    })
+    plain_table <- function(d) {
+      use <- intersect(c("item", "b", "se", "ci_lo", "ci_hi", "t", "p", "n", "p_bonferroni_neighborhood", "p_bonferroni_universe"), names(d))
+      d <- d[, use, drop = FALSE]
+      tags$table(tags$thead(tags$tr(lapply(names(d), tags$th))), tags$tbody(lapply(seq_len(nrow(d)), function(i)
+        tags$tr(lapply(d[i, , drop = FALSE], function(v) tags$td(if (is.numeric(v)) fmt(v, 4) else as.character(v)))))))
+    }
+    tags$html(tags$head(tags$meta(charset = "utf-8"), tags$title("AMPPS comparison record"),
+      tags$style("body{font:16px Georgia,serif;max-width:1100px;margin:50px auto;padding:0 24px;color:#202020;line-height:1.6}h1{font-size:27px}h2{font-size:20px;border-top:1px solid #999;padding-top:18px}p{overflow-wrap:anywhere}table{border-collapse:collapse;font-size:11px;width:100%}th{border-top:1px solid;border-bottom:1px solid}td,th{padding:5px;text-align:left;overflow-wrap:anywhere}tr:last-child td{border-bottom:1px solid}@media print{body{margin:0;max-width:none}h2{break-after:avoid}}")),
+      tags$body(blocks, tags$h2("Focal estimates"), plain_table(reports()$focal), tags$h2("Unreported alternatives in this view"), plain_table(reports()$alternatives),
+        tags$p("b = predictor coefficient; se = standard error; ci_lo/ci_hi = individual 95% interval endpoints; n = fitted rows. p is the two-sided regression p-value. Optional p_bonferroni columns name their family; they are not coefficient corrections.")))
+  })
+  output$report_preview <- renderUI({
+    txt <- report_text(); end <- which(txt == "## Boundary comparison")[1]
+    tagList(lapply(txt[seq.int(10, end - 1)], function(s) if (startsWith(s, "## ")) h4(substring(s, 4)) else if (nzchar(s)) p(s)))
+  })
+  output$provenance_panel <- renderUI({a <- result(); help_box("Sources and software", p(paste(a$provenance, collapse = " ")),
+    p(paste(a$network$provenance, collapse = " ")), p(paste("Current runtime:", R.version.string, "· EGAnet", as.character(packageVersion("EGAnet")))),
+    p("This session runs on your computer. Network membership is empirical context; interpretation requires the measurement descriptions."))})
+  payload <- reactive({
+    a <- result()
+    list(landscape = a$landscape, eligibility = a$eligibility, report = reports(), metadata = a$metadata,
+      network = a$network, neighborhoods = neighborhoods(), annotations = active_annotations(),
+      input_provenance = a[["input_provenance"]],
+      settings = list(app_version = APP_VERSION, source = a$label, run = rv$settings, model = c(a$model, list(measures = a$measures)),
+        focal = focal(), boundary = input$boundary, multiplicity = isTRUE(input$multiplicity),
+        question = input$question, population = input$population, analysis_unit = input$analysis_unit,
+        network_unit = input$network_unit, rationale = input$rationale, selection_timing_declaration = input$timing,
+        dated_record = input$record, interpretation = input$interpretation, coding = "Original coding retained; no automatic orientation",
+        network_input_separate = !is.null(rv$network_upload) && rv$settings$source == "upload",
+        events = rv$events, provenance = a$provenance), reporting_text = report_text())
+  })
+  output$download_bundle <- downloadHandler(filename = function() paste0("AMPPS_comparison_", Sys.Date(), ".zip"), content = function(file) {
+    a <- result()
+    inputs <- NULL
+    if (rv$settings$source == "demo") inputs <- c(analysis_input.csv = file.path("data", "gss_year.csv"))
+    else if (isTRUE(input$include_inputs)) {inputs <- unlist(rv$inputs); names(inputs) <- paste0(names(inputs), "_input.csv")}
+    export_bundle(file, payload(), data_files = inputs)
+  })
+  output$download_report <- downloadHandler(filename = function() "AMPPS_comparison_report.html", content = function(file) writeLines(as.character(report_html()), file, useBytes = TRUE))
+  output$download_csv <- downloadHandler(filename = function() "AMPPS_all_estimates.csv", content = function(file) write.csv(spreadsheet_safe_frame(reports()$all), file, row.names = FALSE, na = ""))
+  output$download_plot <- downloadHandler(filename = function() "AMPPS_result_landscape.pdf", content = function(file) {
+    ph <- if (input$plot_metric == "b") max(5, ceiling(nrow(plot_data()) / 2) * 1.3) else max(5, nrow(plot_data()) * .22 + 1.5)
+    ggsave(file, plot = result_ggplot(), device = "pdf", width = 9, height = ph)
+  })
+}
+
+shinyApp(ui, server)

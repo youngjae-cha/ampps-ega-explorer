@@ -1,0 +1,45 @@
+item,label,t_value,category3
+Natenvir,Improving & protecting environment,0.058739844,Distal-other
+Natheal,Improving & protecting nations health,-0.549692684,Distal-other
+Natcity,Solving problems of big cities,-0.144279155,Distal-other
+Natcrime,Halting rising crime rate,-0.749694959,Distal-other
+Natdrug,Dealing with drug addiction,0.17455291,Distal-other
+Nateduc,Improving nations education system,0.298137375,Distal-other
+Natrace,Improving the conditions of blacks,1.798717268,Distal-other
+Natarms,"Military, armaments, and defense",0.698620706,Distal-other
+Nataid,Foreign aid,2.410186216,Distal-other
+Natfare,Welfare,0.925216891,Distal-other
+Courts,Courts dealing with criminals,3.630439799,Distal-other
+Attend,How often R attends religious services,2.841434607,Distal-other
+Reliten,Strength of affiliation,-3.039124049,Distal-other
+Happy,General happiness,-4.012203304,Focal
+Hapmar,Happiness of marriage,-1.227538999,Proximal-other
+Health,Condition of health,-2.250964078,Proximal-other
+Life,Is life exciting or dull,2.171541592,Proximal-other
+Helpful,People helpful or looking out for selves,-1.724653099,Proximal-other
+Fair,People fair or try to take advantage,1.631952029,Focal
+Trust,Can people be trusted,-1.830190589,Focal
+Confinan,Confid in banks & financial institutions,-1.003755814,Distal-other
+Conbus,Confidence in major companies,-2.375674382,Distal-other
+Conclerg,Confidence in organized religion,-1.764753442,Distal-other
+Coneduc,Confidence in education,-1.793302965,Distal-other
+Confed,Confid. in exec branch of fed govt,-2.250449561,Distal-other
+Conlabor,Confidence in organized labor,2.17134147,Distal-other
+Conpress,Confidence in press,0.262184381,Distal-other
+Conmedic,Confidence in medicine,-2.485504406,Distal-other
+Contv,Confidence in television,-0.455470572,Distal-other
+Conjudge,Confid. in united states supreme court,-1.925302179,Distal-other
+Consci,Confidence in scientific community,-0.300029074,Distal-other
+Conlegis,Confidence in congress,-2.31092484,Distal-other
+Conarmy,Confidence in military,2.195107479,Distal-other
+Aged,Should aged live with their children,1.78311899,Distal-other
+Satjob,Work satisfaction,1.987843644,Proximal-other
+Finalter,Change in financial situation,-0.140347745,Proximal-other
+Finrela,Opinion of family income,1.641524124,Proximal-other
+Getahead,Opinion of how people get ahead,2.46954204,Distal-other
+Divlaw,Divorce laws,2.510850054,Distal-other
+Premarsx,Sex before marriage,-4.41197515,Distal-other
+Xmarsex,Sex with person other than spouse,-0.258552021,Distal-other
+Homosex,Homosexual sex relations,-1.81551908,Distal-other
+Pornlaw,Feelings about pornography laws,-2.697467355,Distal-other
+News,How often Does R read newspaper,-1.924469931,Proximal-other
