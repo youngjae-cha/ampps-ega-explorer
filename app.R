@@ -9,7 +9,7 @@ source(file.path("R", "ega.R"), local = TRUE)
 source(file.path("R", "export.R"), local = TRUE)
 options(shiny.maxRequestSize = 50 * 1024^2, shiny.sanitize.errors = TRUE)
 
-APP_VERSION <- "1.0.2-review"
+APP_VERSION <- "1.0.3-review"
 DEMO <- load_demo_data("data")
 DEMO_SOURCES <- read.csv(file.path("data", "gss_year_cell_source.csv"), check.names = FALSE)
 DEMO_NETWORK <- load_demo_network("data")
@@ -40,7 +40,9 @@ lead <- function(k, title, text) div(class = "step-lead", div(class = "eyebrow",
 next_btn <- function(id, text) actionButton(id, text, class = "btn-primary next-button")
 table_opts <- list(pageLength = 12, scrollX = TRUE, dom = "tip", order = list())
 display_estimates <- function(x, all = FALSE) {
-  out <- data.frame(Outcome = x$item, n = x$n, b = round(x$b, 4), SE = round(x$se, 4),
+  x <- display_oriented_estimates(x)
+  out <- data.frame(Outcome = paste0(x$item, ifelse(x$orientation_reversed, " [RC]", "")),
+    `Higher displayed value` = x$high_value_means, n = x$n, b = round(x$b, 4), SE = round(x$se, 4),
     `95% interval` = paste0("[", fmt(x$ci_lo, 4), ", ", fmt(x$ci_hi, 4), "]"),
     t = round(x$t, 3), p = signif(x$p, 4), check.names = FALSE)
   if (all) out$Role <- ifelse(x$focal, "Focal", ifelse(x$in_neighborhood, "Neighbor", "Other"))
@@ -87,7 +89,7 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
           fileInput("network_csv", "Separate network data (optional .csv)", accept = ".csv"),
           p(class = "muted", "Supply the same outcome column names. Otherwise the outcome columns of the analysis data build the map; the predictor never enters EGA."),
           fileInput("metadata_csv", "Measure descriptions (optional .csv)", accept = ".csv"),
-          help_box("Metadata format", p("Columns: item, label, domain, respondent_scope, coding_note. Missing descriptions remain unclassified.")),
+          help_box("Metadata format", p("Columns: item, label, domain, respondent_scope, coding_note. Missing descriptions remain unclassified. For an explicit display direction, add orientation_multiplier (-1 or +1), high_value_means, and orientation_source. Uploaded keys are labeled user-declared, not independently verified.")),
           checkboxInput("bootstrap", "Estimate bootstrap stability and a typical network", FALSE),
           conditionalPanel("input.bootstrap", selectInput("boot_iter", "Bootstrap replications", c(100, 500), selected = 100)),
           numericInput("seed", "Network seed", 20260907, min = 1, max = 2147483646)),
@@ -123,28 +125,29 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
       lead(3, "What do the alternatives show?", "Read the fixed-model results alongside the EGA neighborhood, keeping each focal outcome visible."),
       fluidRow(column(3, div(class = "panel-card controls",
         radioButtons("result_scope", "Show", c("Current map boundary" = "local", "All analyzable outcomes" = "all")),
-        radioButtons("plot_metric", "Display", c("Compare statistical prominence |t|" = "abs_t", "Original signed t-statistic" = "t", "Estimate with 95% interval" = "b")),
+        radioButtons("plot_metric", "Display", c("Compare statistical prominence |t|" = "abs_t", "Signed t-statistic" = "t", "Estimate with 95% interval" = "b")),
+        radioButtons("orientation_mode", "Display direction", c("Documented semantic key"="documented", "Original coding"="original"), selected="documented"),
         checkboxInput("multiplicity", "Show optional Bonferroni sensitivity", FALSE),
-        help_box("Reading the display", p("Absolute t orders statistical prominence, not effect magnitude. Each outcome's estimate, uncertainty and sample size are available below. Raw outcome coding is retained; read the measurement notes before comparing substantive directions."),
-          p("Raw coefficients appear in separate panels with separate axes. Their intervals describe each estimate in its original outcome units.")),
+        help_box("Reading the display", p("Absolute t orders statistical prominence, not effect magnitude. RC marks directions reversed using a documented semantic key, never the result's sign. Original coefficients remain in the downloads; unverified or nonmonotone items retain original coding."),
+          p("Check the higher-value meaning for each outcome. Coding alignment preserves its units but does not make different constructs equivalent.")),
         conditionalPanel("input.multiplicity", p(class = "muted", "Two declared families are shown separately: the current boundary and the full analyzable set. These are regression p-value sensitivities, not selection verdicts. Valid individual tests and a justified family remain necessary.")),
         downloadButton("download_plot", "Download result plot (PDF)"),
         next_btn("to_interpret", "Interpret and report →"))),
       column(9, conditionalPanel("input.plot_metric == 'abs_t'",
         div(class="panel-card", id="reading_combined", h3("Read the neighborhood in two ways"),
-          p(class="reading-intro", "Left: compare statistical prominence. Right: read each estimate in its original units."),
+          p(class="reading-intro", "Left: compare statistical prominence. Right: read estimates and intervals in each outcome's units, using the selected display direction."),
           uiOutput("combined_estimates"),
           p(class="reading-intro", "Filled points mark focal outcomes; open points mark unreported alternatives. |t| compares an estimate with its standard error, not effect magnitude."),
-          p(class="reading-intro", "Coefficient signs retain the supplied coding. A negative coefficient means a lower numerical outcome score; its substantive meaning depends on that item's coding."))),
+          p(class="reading-intro", "RC = reverse-coded display direction. Higher-value meanings appear beside each estimate. Original marks an unreversed direction, either because the key is unresolved or Original coding is selected; consult the item notes."))),
         conditionalPanel("input.plot_metric != 'abs_t'", div(class = "panel-card", id = "prominence_panel",
         h3("A · Read the selected result display"),
         p(class = "reading-intro", "Signed t compares the estimate with its standard error. The coefficient view shows each estimate and interval on its own outcome scale."),
         uiOutput("landscape_holder"),
-        p(class = "reading-intro", "The table below retains the original coefficients and intervals so that direction and uncertainty remain visible.")),
-        div(class = "panel-card", id = "coefficient_panel", h3("B · Read the estimates in their original units"),
-          p(class = "reading-intro", "The same outcomes, in the same order. Signs and intervals are retained; no outcomes have been reverse-coded."),
+        p(class = "reading-intro", "Directions follow the selected display direction; raw coefficients and intervals remain in the downloads.")),
+        div(class = "panel-card", id = "coefficient_panel", h3("B · Read the displayed estimates"),
+          p(class = "reading-intro", "The same outcomes, in the same order. RC marks the documented reversals applied consistently to coefficients, t statistics, and both interval endpoints."),
           uiOutput("reading_estimates"),
-          p(class = "reading-intro", "A minus sign means a lower numerical outcome score, not automatically less of the named construct. Outcome coding and respondent groups must be checked before substantive directions are compared."))),
+          p(class = "reading-intro", "When the documented key is selected, a positive coefficient points toward the stated higher-value meaning for aligned items. Original-coded items require their separate coding notes."))),
         div(class = "panel-card", h3("Every focal outcome"), DTOutput("focal_table")),
         uiOutput("input_sensitivity_panel"),
         div(class = "panel-card", h3("Full estimates"), DTOutput("landscape_table"))))),
@@ -200,12 +203,16 @@ server <- function(input, output, session) {
   })
   outcome_labels <- function(items) {
     a <- result()
-    if (identical(rv$settings$source, "demo")) return(readable_label(items))
+    if (identical(rv$settings$source, "demo")) {
+      key <- normalize_orientation_key(display_key(), items)
+      return(paste0(readable_label(items), ifelse(key$multiplier == -1, " [RC]", ifelse(startsWith(key$status,"raw_")," [original]",""))))
+    }
     labels <- as.character(a$metadata$label[match(items, a$metadata$item)])
     if (length(labels) != length(items)) return(items)
     missing_label <- is.na(labels) | !nzchar(trimws(labels)) | labels == items
     labels[missing_label] <- items[missing_label]
-    ifelse(missing_label, items, paste0(labels, " (", items, ")"))
+    key <- normalize_orientation_key(display_key(), items)
+    paste0(ifelse(missing_label, items, paste0(labels, " (", items, ")")), ifelse(key$multiplier == -1," [RC]",""))
   }
   focal <- reactive({
     a <- result()
@@ -217,8 +224,9 @@ server <- function(input, output, session) {
   neighborhood <- reactive({
     if (identical(input$boundary, "full")) result()$measures else neighborhoods()$sets[[input$boundary %or% "community"]]
   })
+  display_key <- reactive(if (identical(input$orientation_mode,"original")) NULL else result()$orientation)
   reports <- reactive(make_report_tables(result()$landscape, focal(), neighborhood(), result()$metadata,
-                                          multiplicity = isTRUE(input$multiplicity)))
+                                          multiplicity = isTRUE(input$multiplicity), orientation=display_key()))
   active_annotations <- reactive({
     a <- result(); x <- rv$annotations
     x[x$focal %in% focal() & x$item %in% a$measures & !x$item %in% focal(), , drop = FALSE]
@@ -231,7 +239,7 @@ server <- function(input, output, session) {
   load_demo <- function() {
     led <- audit_universe(DEMO$data, DEMO_ITEMS, "MobilityLag", own_lag = TRUE, max_missing = .2)
     ls <- fit_landscape(DEMO$data, DEMO_ITEMS, "MobilityLag", own_lag = TRUE, missing = "common")
-    rv$result <- list(data = DEMO$data, landscape = ls, network = DEMO_NETWORK, metadata = DEMO$metadata,
+    rv$result <- list(data = DEMO$data, landscape = ls, network = DEMO_NETWORK, metadata = DEMO$metadata, orientation=DEMO$orientation,
       measures = DEMO_ITEMS, eligibility = led, label = "GSS worked example", provenance = DEMO$provenance,
       input_provenance = audit_input_provenance(DEMO$data, DEMO_SOURCES, DEMO_ITEMS,
         "MobilityLag", own_lag = TRUE, missing = "common", primary = ls),
@@ -320,8 +328,9 @@ server <- function(input, output, session) {
     }, error = function(e) {rv$metadata_upload <- NULL; rv$metadata_id <- "invalid"; rv$error <- conditionMessage(e)})
   })
   observeEvent(input$run, {
+    session$sendCustomMessage("analysisBuildState", list(busy=TRUE))
     tryCatch({
-      if (input$source_mode == "demo") {load_demo(); return()}
+      if (input$source_mode == "demo") {load_demo(); session$sendCustomMessage("navigateStage", list(stage="map")); return()}
       req(rv$upload)
       cf <- config(); d <- rv$upload
       if (rv$network_id == "invalid" || rv$metadata_id == "invalid") stop("Replace the invalid optional CSV before running.")
@@ -340,7 +349,8 @@ server <- function(input, output, session) {
         net <- compute_ega(nd, ms, bootstrap = cf$bootstrap, iter = cf$iter, seed = cf$seed)
         meta <- rv$metadata_upload
         if (is.null(meta)) meta <- data.frame(item = ms, label = ms, domain = "Not supplied", respondent_scope = "Not supplied", coding_note = "As supplied; direction not independently verified")
-        rv$result <- list(data = d, landscape = ls, network = net, metadata = meta, measures = ms,
+        key <- orientation_from_metadata(meta, ms)
+        rv$result <- list(data = d, landscape = ls, network = net, metadata = meta, orientation=key, measures = ms,
           eligibility = led, label = rv$upload_label, provenance = "User-supplied CSV; no imputation. Source and selection descriptions are user declarations.",
           model = cf[c("predictor", "covariates", "own_lag", "lag_suffix", "missing", "se_method")])
         rv$settings <- cf; rv$error <- NULL
@@ -349,11 +359,10 @@ server <- function(input, output, session) {
         incProgress(.75, "Ready")
       })
       log_event("analysis_built", paste(length(rv$result$measures), "outcomes"))
-    }, error = function(e) {rv$error <- conditionMessage(e); showNotification(conditionMessage(e), type = "error", duration = NULL)})
+      session$sendCustomMessage("navigateStage", list(stage="map"))
+    }, error = function(e) {rv$error <- conditionMessage(e); showNotification(conditionMessage(e), type = "error", duration = NULL)},
+      finally=session$sendCustomMessage("analysisBuildState", list(busy=FALSE)))
   })
-  observeEvent(input$to_map, updateTabsetPanel(session, "stage", selected = "map"))
-  observeEvent(input$to_results, updateTabsetPanel(session, "stage", selected = "results"))
-  observeEvent(input$to_interpret, updateTabsetPanel(session, "stage", selected = "interpret"))
   observeEvent(input$boundary, log_event("boundary_view", input$boundary), ignoreInit = TRUE)
   observeEvent(input$focal, log_event("focal_view", paste(input$focal, collapse = ", ")), ignoreInit = TRUE)
   observe({
@@ -447,14 +456,18 @@ server <- function(input, output, session) {
       plotly::config(displaylogo = FALSE, modeBarButtonsToRemove = c("select2d", "lasso2d"))
   })
   plot_data <- reactive({
-    a <- result(); x <- a$landscape
+    a <- result(); x <- display_oriented_estimates(reports()$all)
     if (input$result_scope == "local") x <- x[x$item %in% neighborhood(), , drop = FALSE]
     x <- x[is.finite(x$t), , drop = FALSE]
-    x <- x[order(abs(x$t)), , drop = FALSE]; x$item_display <- factor(x$item, levels = x$item)
+    x <- x[order(abs(x$t)), , drop = FALSE]
+    facet_labels <- paste0(x$item,ifelse(x$orientation_reversed," [RC]",ifelse(startsWith(x$orientation_status,"raw_")," [original]","")))
+    x$item_display <- factor(facet_labels, levels = facet_labels)
     x$readable_display <- factor(outcome_labels(x$item), levels = outcome_labels(x$item))
     x$role <- factor(ifelse(x$item %in% focal(), "Focal", "Unreported alternative"), levels = c("Focal", "Unreported alternative"))
     x$hover <- paste0(htmltools::htmlEscape(x$item), "<br>b = ", fmt(x$b, 4), "; SE = ", fmt(x$se, 4),
-      "<br>95% interval [", fmt(x$ci_lo, 4), ", ", fmt(x$ci_hi, 4), "]<br>t = ", fmt(x$t), "; p = ", fmt(x$p, 5), "<br>n = ", x$n)
+      "<br>95% interval [", fmt(x$ci_lo, 4), ", ", fmt(x$ci_hi, 4), "]<br>t = ", fmt(x$t), "; p = ", fmt(x$p, 5), "<br>n = ", x$n,
+      "<br>", ifelse(x$orientation_reversed,"RC; ",""), htmltools::htmlEscape(x$high_value_means),
+      "<br>Raw b = ",fmt(x$raw_b,4),"; raw t = ",fmt(x$raw_t))
     x
   })
   result_ggplot <- reactive({
@@ -463,7 +476,7 @@ server <- function(input, output, session) {
       g <- ggplot(x, aes(y = 0, color = role)) + geom_vline(xintercept = 0, color = "#aebabb", linewidth = .4) +
         geom_segment(aes(x = ci_lo, xend = ci_hi, yend = 0), linewidth = .65) +
         geom_point(aes(x = b, text = hover), size = 2.7) + facet_wrap(~item_display, scales = "free_x", ncol = 2) +
-        scale_y_continuous(breaks = NULL) + labs(x = "Estimate and individual 95% interval · separate axes, original units")
+        scale_y_continuous(breaks = NULL) + labs(x = "Displayed estimate and 95% interval · separate outcome axes")
     } else if (input$plot_metric == "abs_t") g <- ggplot(x, aes(y = readable_display, color = role)) +
       geom_segment(aes(x = 0, xend = abs(t), yend = readable_display), color = "#d8e1e2", linewidth = .45) +
       geom_point(aes(x = abs(t), text = hover, shape = role), size = 3.2, stroke = 1.2) +
@@ -471,7 +484,7 @@ server <- function(input, output, session) {
       scale_x_continuous(limits = c(0, NA), expand = expansion(mult = c(.01, .08))) +
       labs(x = "Absolute t-statistic |t| · statistical prominence", shape = NULL)
     else g <- ggplot(x, aes(y = readable_display, color = role)) + geom_vline(xintercept = 0, color = "#aebabb", linewidth = .4) +
-      geom_point(aes(x = t, text = hover), size = 2.8) + labs(x = "Signed t-statistic · ordered by absolute t")
+      geom_point(aes(x = t, text = hover), size = 2.8) + labs(x = "Displayed signed t · ordered by absolute t")
     g + scale_color_manual(values = c("Focal" = ACCENT, "Unreported alternative" = "#778b91")) +
       labs(y = NULL, color = NULL) + theme_minimal(base_size = 12) +
       theme(panel.grid.major.y = element_blank(), panel.grid.minor = element_blank(), legend.position = "bottom",
@@ -492,27 +505,28 @@ server <- function(input, output, session) {
       htmltools::HTML(sprintf('<svg viewBox="0 0 142 24" width="142" height="24" aria-label="absolute t %.2f"><line x1="5" y1="12" x2="135" y2="12" stroke="#c7d2d5" stroke-width="1"/><circle cx="%.2f" cy="12" r="4.3" fill="%s" stroke="#24545f" stroke-width="1.7"/></svg>', abs(value),pos,if(focal_flag) "#24545f" else "white"))
     }
     tags$table(class="reading-table combined-table",tags$thead(
-      tags$tr(tags$th("Outcome"),tags$th(paste0("|t|: 0 to ",upper)),tags$th("|t|"),tags$th("Coefficient b"),tags$th("95% interval"))),
+      tags$tr(tags$th("Outcome / higher-value meaning"),tags$th(paste0("|t|: 0 to ",upper)),tags$th("|t|"),tags$th("Coefficient b"),tags$th("95% interval"))),
       tags$tbody(lapply(seq_len(nrow(x)), function(i) tags$tr(class=if(x$item[i]%in%focal()) "focal-reading" else "",
-        tags$td(outcome_labels(x$item[i])), tags$td(dot(x$t[i],x$item[i]%in%focal())),tags$td(fmt(abs(x$t[i]),2)),
+        tags$td(outcome_labels(x$item[i]), tags$small(style="display:block;font-weight:normal",x$high_value_means[i])), tags$td(dot(x$t[i],x$item[i]%in%focal())),tags$td(fmt(abs(x$t[i]),2)),
         tags$td(fmt(x$b[i],4)),tags$td(paste0("[",fmt(x$ci_lo[i],4),", ",fmt(x$ci_hi[i],4),"]"))))))
   })
   output$reading_estimates <- renderUI({
     x <- plot_data(); x <- x[rev(seq_len(nrow(x))), , drop=FALSE]
     tags$table(class="reading-table", tags$thead(tags$tr(tags$th("Outcome"), tags$th("Role"),
-      tags$th("Coefficient b"), tags$th("95% interval"), tags$th("Original t"))),
+      tags$th("Coefficient b"), tags$th("95% interval"), tags$th("Displayed t"))),
       tags$tbody(lapply(seq_len(nrow(x)), function(i) tags$tr(
-        tags$td(outcome_labels(x$item[i])), tags$td(as.character(x$role[i])),
+        tags$td(outcome_labels(x$item[i]),tags$small(style="display:block",x$high_value_means[i])), tags$td(as.character(x$role[i])),
         tags$td(fmt(x$b[i],4)), tags$td(paste0("[",fmt(x$ci_lo[i],4),", ",fmt(x$ci_hi[i],4),"]")),
         tags$td(fmt(x$t[i],2))))))
   })
   output$completed_comparison <- renderUI({
     a <- result(); selected <- unique(c(focal(), active_annotations()$item))
-    x <- a$landscape[a$landscape$item %in% selected, , drop=FALSE]
+    x <- display_oriented_estimates(reports()$all)
+    x <- x[x$item %in% selected, , drop=FALSE]
     tags$div(
       p(class="reading-intro", paste0("Current neighborhood: ", length(neighborhood()), " outcomes; ", length(focal()), " focal outcomes.")),
       tags$table(class="reading-table", tags$thead(tags$tr(tags$th("Outcome"), tags$th("Role"), tags$th("|t|"), tags$th("95% interval"))),
-        tags$tbody(lapply(seq_len(nrow(x)), function(i) tags$tr(tags$td(outcome_labels(x$item[i])),
+        tags$tbody(lapply(seq_len(nrow(x)), function(i) tags$tr(tags$td(outcome_labels(x$item[i]),tags$small(style="display:block",x$high_value_means[i])),
           tags$td(if (x$item[i] %in% focal()) "Focal" else if (x$item[i] %in% neighborhood()) "Unreported neighbor" else "Other unreported alternative"),
           tags$td(fmt(abs(x$t[i]),2)), tags$td(paste0("[",fmt(x$ci_lo[i],4),", ",fmt(x$ci_hi[i],4),"]")))))),
       h4("Measurement comparison (researcher's note)"),
@@ -542,9 +556,10 @@ server <- function(input, output, session) {
     audit <- result()[["input_provenance"]]; req(audit)
     ms <- focal()
     block <- function(x, label, restricted = FALSE) {
+      x <- display_oriented_estimates(orient_landscape(x, display_key()))
       x <- x[match(ms, x$item), , drop = FALSE]
       info <- audit$summary[match(ms, audit$summary$item), , drop = FALSE]
-      tab <- data.frame(Outcome = x$item, Inputs = label, n = x$n,
+      tab <- data.frame(Outcome = paste0(x$item,ifelse(x$orientation_reversed," [RC]","")), Inputs = label, n = x$n,
         `Inherited own-lags` = if (restricted) info$restricted_own_lag_carried_n else info$primary_own_lag_carried_n,
         b = round(x$b, 5), `95% interval` = paste0("[", fmt(x$ci_lo, 5), ", ", fmt(x$ci_hi, 5), "]"),
         p = signif(x$p, 4), check.names = FALSE)
@@ -558,7 +573,7 @@ server <- function(input, output, session) {
   output$annotations_table <- renderDT(datatable(active_annotations(), rownames = FALSE, options = list(dom = "t", scrollX = TRUE)))
 
   report_text <- reactive({
-    a <- result(); ls <- a$landscape; nb <- neighborhood(); fs <- focal()
+    a <- result(); ls <- display_oriented_estimates(reports()$all); nb <- neighborhood(); fs <- focal()
     txt <- c("# AMPPS outcome-comparison record", "", paste("Dataset:", a$label),
       paste("Question:", input$question), paste("Population / period:", input$population),
       paste("Analysis unit:", input$analysis_unit), paste("Network unit:", input$network_unit), "",
@@ -574,11 +589,11 @@ server <- function(input, output, session) {
       if (!nrow(r) || !is.finite(r$t)) {txt <- c(txt, paste("-", f, ": model not estimable; see status in results CSV.")); next}
       higher <- peers$item[abs(peers$t) > abs(r$t)]
       excludes <- r$ci_lo > 0 || r$ci_hi < 0
-      txt <- c(txt, paste0("- ", f, ": b = ", fmt(r$b, 4), ", SE = ", fmt(r$se, 4), ", 95% interval [", fmt(r$ci_lo, 4), ", ", fmt(r$ci_hi, 4),
+      txt <- c(txt, paste0("- ", f, if (r$orientation_reversed) " [RC]" else "", ": b = ", fmt(r$b, 4), ", SE = ", fmt(r$se, 4), ", 95% interval [", fmt(r$ci_lo, 4), ", ", fmt(r$ci_hi, 4),
         "], t = ", fmt(r$t), ", p = ", fmt(r$p, 5), ", n = ", r$n, ". The interval ", if (excludes) "excludes" else "includes", " zero. ",
-        length(higher), if (length(higher) == 1L) " unreported outcome in this view has larger absolute t" else " unreported outcomes in this view have larger absolute t", if (length(higher)) paste0(": ", paste(higher, collapse = ", ")) else "", "."))
+        length(higher), if (length(higher) == 1L) " unreported outcome in this view has larger absolute t" else " unreported outcomes in this view have larger absolute t", if (length(higher)) paste0(": ", paste(higher, collapse = ", ")) else "", ". Higher-value meaning: ",r$high_value_means," (",r$orientation_status,")."))
     }
-    txt <- c(txt, "", "These are the observed estimates in the stated analysis. Raw coding is retained; absolute t describes statistical prominence, not effect magnitude or the selection process.",
+    txt <- c(txt, "", paste0("Display direction: ", if (identical(input$orientation_mode,"original")) "Original coding" else "Documented semantic key", ". These are observed estimates using the selected display direction. RC marks reversed coefficients, t statistics and intervals; raw fits remain in the downloads. Items without a verified or explicitly declared key retain original coding, as do all items when Original coding is selected. Absolute t and p-values do not change under a sign reversal; absolute t describes statistical prominence, not effect magnitude or the selection process."),
       "", "## Boundary comparison", "The regression estimates are unchanged across these views.")
     sets <- neighborhoods()$sets
     for (nm in names(sets)) txt <- c(txt, paste0("- ", nm, " (", length(sets[[nm]]), "): ", paste(sets[[nm]], collapse = ", ")))
@@ -588,7 +603,8 @@ server <- function(input, output, session) {
       txt <- c(txt, "", "## Annual input sensitivity (separate from the outcome comparison)",
         "The primary estimates above use the supplied annual inputs. The following refits retain only primary rows whose current outcome is labeled extract; supplied predictor and one-year lag values are unchanged.")
       for (f in fs) {
-        r <- audit$restricted_landscape[audit$restricted_landscape$item == f, , drop = FALSE]
+        oriented_restricted <- display_oriented_estimates(orient_landscape(audit$restricted_landscape, display_key()))
+        r <- oriented_restricted[oriented_restricted$item == f, , drop = FALSE]
         counts <- audit$summary[audit$summary$item == f, , drop = FALSE]
         txt <- c(txt, paste0("- ", f, ": ", counts$restricted_n, " of ", counts$primary_n,
           " primary rows retained; ", counts$restricted_own_lag_carried_n, " inherited own-lag values remain. ",
@@ -613,7 +629,9 @@ server <- function(input, output, session) {
       else if (nzchar(s)) tags$p(s) else NULL
     })
     plain_table <- function(d) {
-      use <- intersect(c("item", "b", "se", "ci_lo", "ci_hi", "t", "p", "n", "p_bonferroni_neighborhood", "p_bonferroni_universe"), names(d))
+      d <- display_oriented_estimates(d)
+      d$item <- paste0(d$item,ifelse(d$orientation_reversed," [RC]",""))
+      use <- intersect(c("item", "high_value_means", "b", "se", "ci_lo", "ci_hi", "t", "p", "n", "p_bonferroni_neighborhood", "p_bonferroni_universe"), names(d))
       d <- d[, use, drop = FALSE]
       tags$table(tags$thead(tags$tr(lapply(names(d), tags$th))), tags$tbody(lapply(seq_len(nrow(d)), function(i)
         tags$tr(lapply(d[i, , drop = FALSE], function(v) tags$td(if (is.numeric(v)) fmt(v, 4) else as.character(v)))))))
@@ -621,7 +639,7 @@ server <- function(input, output, session) {
     tags$html(tags$head(tags$meta(charset = "utf-8"), tags$title("AMPPS comparison record"),
       tags$style("body{font:16px Georgia,serif;max-width:1100px;margin:50px auto;padding:0 24px;color:#202020;line-height:1.6}h1{font-size:27px}h2{font-size:20px;border-top:1px solid #999;padding-top:18px}p{overflow-wrap:anywhere}table{border-collapse:collapse;font-size:11px;width:100%}th{border-top:1px solid;border-bottom:1px solid}td,th{padding:5px;text-align:left;overflow-wrap:anywhere}tr:last-child td{border-bottom:1px solid}@media print{body{margin:0;max-width:none}h2{break-after:avoid}}")),
       tags$body(blocks, tags$h2("Focal estimates"), plain_table(reports()$focal), tags$h2("Unreported alternatives in this view"), plain_table(reports()$alternatives),
-        tags$p("b = predictor coefficient; se = standard error; ci_lo/ci_hi = individual 95% interval endpoints; n = fitted rows. p is the two-sided regression p-value. Optional p_bonferroni columns name their family; they are not coefficient corrections.")))
+        tags$p("b and t use the selected display direction; RC marks reversal and high_value_means defines the direction. se = standard error; ci_lo/ci_hi = correctly ordered individual 95% interval endpoints; n = fitted rows. Raw fits and the orientation key remain in CSV exports. p is the unchanged two-sided regression p-value. Optional p_bonferroni columns name their family; they are not coefficient corrections.")))
   })
   output$report_preview <- renderUI({
     txt <- report_text(); end <- which(txt == "## Boundary comparison")[1]
@@ -633,13 +651,15 @@ server <- function(input, output, session) {
   payload <- reactive({
     a <- result()
     list(landscape = a$landscape, eligibility = a$eligibility, report = reports(), metadata = a$metadata,
+      orientation = normalize_orientation_key(display_key(),a$measures),
+      documented_orientation_key = normalize_orientation_key(a$orientation,a$measures),
       network = a$network, neighborhoods = neighborhoods(), annotations = active_annotations(),
       input_provenance = a[["input_provenance"]],
       settings = list(app_version = APP_VERSION, source = a$label, run = rv$settings, model = c(a$model, list(measures = a$measures)),
-        focal = focal(), boundary = input$boundary, multiplicity = isTRUE(input$multiplicity),
+        focal = focal(), boundary = input$boundary, multiplicity = isTRUE(input$multiplicity), orientation_mode=input$orientation_mode %or% "documented",
         question = input$question, population = input$population, analysis_unit = input$analysis_unit,
         network_unit = input$network_unit, rationale = input$rationale, selection_timing_declaration = input$timing,
-        dated_record = input$record, interpretation = input$interpretation, coding = "Original coding retained; no automatic orientation",
+        dated_record = input$record, interpretation = input$interpretation, coding = "Raw inputs/fits retained; documented semantic key applied only to displayed estimates; unverified items retain original coding",
         network_input_separate = !is.null(rv$network_upload) && rv$settings$source == "upload",
         events = rv$events, provenance = a$provenance), reporting_text = report_text())
   })

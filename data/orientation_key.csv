@@ -1,0 +1,12 @@
+item,multiplier,status,high_value_means,source
+Happy,-1,verified,More general happiness,https://sda.berkeley.edu/GSS/Doc/gss009.html#HAPPY
+Hapmar,-1,verified,More marital happiness,https://sda.berkeley.edu/GSS/Doc/gss009.html#HAPMAR
+Health,-1,verified,Better self-rated health,https://sda.berkeley.edu/GSS/Doc/gss009.html#HEALTH
+Life,-1,verified,More excitement about life,https://sda.berkeley.edu/GSS/Doc/gss009.html#LIFE
+Satjob,-1,verified,More job or housekeeping satisfaction,https://sda.berkeley.edu/GSS/Doc/gss011.html#SATJOB
+News,-1,verified,More frequent newspaper reading,https://sda.berkeley.edu/GSS/Doc/gss014.html#NEWS
+Finrela,1,verified,Higher relative family income,https://sda.berkeley.edu/GSS/Doc/gss012.html#FINRELA
+Trust,1,raw_nonmonotone,Original coding; depends is a separate category and is not a higher trust level,https://sda.berkeley.edu/GSS/Doc/gss009.html#TRUST
+Fair,1,raw_nonmonotone,Original coding; depends is a separate category and is not a higher fairness level,https://sda.berkeley.edu/GSS/Doc/gss009.html#FAIR
+Helpful,1,raw_nonmonotone,Original coding; depends is a separate category and is not a higher helpfulness level,https://sda.berkeley.edu/GSS/Doc/gss009.html#HELPFUL
+Finalter,1,raw_unverified,Original inherited coding; source and analysis recoding require reconciliation,https://sda.berkeley.edu/GSS/Doc/gss012.html#FINALTER

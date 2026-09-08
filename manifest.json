@@ -5373,7 +5373,7 @@
   },
   "files": {
     "app.R": {
-      "checksum": "c0d599c19ed1c4481224b4c9f26f73a0"
+      "checksum": "25298d5aebcb7b15a03c62c1243859ca"
     },
     "data/effect_landscape.csv": {
       "checksum": "2d5d34ded219c5888c4955ae18314934"
@@ -5396,8 +5396,11 @@
     "data/landscape_reference.csv": {
       "checksum": "bb21113379da22db735dcdc56bca9a62"
     },
+    "data/orientation_key.csv": {
+      "checksum": "f5277ccc90371c700268f86a8e3f84b9"
+    },
     "data/README.md": {
-      "checksum": "f68a595da3f4757b067bcc8ec435e770"
+      "checksum": "eea05efb59eb294deab7a0aa2cce7410"
     },
     "data/typical_network.csv": {
       "checksum": "ca241200652fd14b3862c7712a898552"
@@ -5415,19 +5418,19 @@
       "checksum": "6648b6ed46300736700c35ad8509548e"
     },
     "R/export.R": {
-      "checksum": "e24b64c29e2bf92a4bd6c73eb058b786"
+      "checksum": "1cbf2dbc581ffdbdbfa2444101ebd1b2"
     },
     "R/model.R": {
-      "checksum": "b95e3d470086201c91c32a619173042d"
+      "checksum": "b8f494849f8f8e1dd83a7dd4f7f86cef"
     },
     "R/provenance.R": {
       "checksum": "7b3fce6821c78ab85e17f2f92fc19344"
     },
     "www/app.css": {
-      "checksum": "d6a03652e5a2f52526f79ecdb7a39d76"
+      "checksum": "a929d27361d2552286e393ab13032075"
     },
     "www/app.js": {
-      "checksum": "8fe2ffef18d3ae997092d757b747acd1"
+      "checksum": "d4cc9a23f84583c2fcb8236d3a257512"
     }
   },
   "users": null

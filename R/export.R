@@ -29,6 +29,9 @@ export_bundle <- function(path, payload, data_files=NULL) {
   csv(payload$landscape, "landscape.csv")
   csv(payload$eligibility, "eligibility_ledger.csv")
   csv(payload$metadata, "item_annotations.csv")
+  orientation <- payload[["orientation"]]
+  csv(orientation, "orientation_key.csv")
+  csv(payload[["documented_orientation_key"]], "documented_orientation_key.csv")
   csv(payload$annotations, "comparison_annotations.csv")
   input_audit <- payload[["input_provenance"]]
   if (!is.null(input_audit)) {
@@ -40,6 +43,7 @@ export_bundle <- function(path, payload, data_files=NULL) {
   reports <- payload[["report"]]
   if (!is.null(reports)) for (key in intersect(names(reports), c("focal", "alternatives", "all"))) csv(reports[[key]], paste0("report_",key,".csv"))
   settings <- payload$settings
+  if (!is.null(orientation)) settings$orientation <- orientation
   # Machine-readable settings preserve literal identifiers; spreadsheet-safe CSV labels may be escaped.
   if (is.null(settings$model)) settings$measures <- as.character(payload$landscape$item) else settings$model$measures <- as.character(payload$landscape$item)
   settings$export <- list(timestamp_utc=format(Sys.time(), tz="UTC", usetz=TRUE), app="AMPPS Explorer", raw_inputs_included=!is.null(data_files) && length(data_files)>0, csv_text_formula_escape="Leading =,+,-,@ in text cells/headers receives a single apostrophe in result CSVs; numeric cells and explicitly included input files are unchanged.")
@@ -84,7 +88,11 @@ export_bundle <- function(path, payload, data_files=NULL) {
   },character(1))
   html_table <- function(tab,title) {
     if (is.null(tab) || !nrow(tab)) return("")
-    cols<-intersect(c("item","label","n","b","se","ci_lo","ci_hi","t","p","p_bonferroni_neighborhood","p_bonferroni_universe"),names(tab))
+    if ("oriented_b" %in% names(tab)) {
+      for (field in c("b","t","ci_lo","ci_hi")) tab[[field]] <- tab[[paste0("oriented_",field)]]
+      tab$item <- paste0(tab$item,ifelse(tab$orientation_reversed," [RC]",""))
+    }
+    cols<-intersect(c("item","label","high_value_means","n","b","se","ci_lo","ci_hi","t","p","p_bonferroni_neighborhood","p_bonferroni_universe"),names(tab))
     head<-paste0("<tr>",paste0("<th>",htmltools::htmlEscape(cols),"</th>",collapse=""),"</tr>")
     rows<-vapply(seq_len(nrow(tab)),function(i) {
       cells<-vapply(cols,function(nm) {
@@ -97,7 +105,7 @@ export_bundle <- function(path, payload, data_files=NULL) {
     paste0("<h2>",htmltools::htmlEscape(title),"</h2><div class='table-scroll'><table><thead>",head,"</thead><tbody>",paste(rows,collapse=""),"</tbody></table></div>")
   }
   report_tables <- if (!is.null(reports)) c(html_table(reports$focal,"Focal estimates"),html_table(reports$alternatives,"Unreported estimates in the current comparison"),
-    "<p>Note. b is the predictor coefficient in original outcome units; SE is its standard error; ci_lo and ci_hi are individual 95% interval limits; t is b/SE; p is the two-sided model p-value. Optional Bonferroni columns use the declared current-neighborhood and full-universe counts. These are sensitivity checks, not coefficient-bias corrections. All outcome results and statuses are in report_all.csv.</p>") else character()
+    "<p>Note. b and t use the recorded display direction, with RC marking reversed directions and high_value_means stating their meaning. Raw coefficients, t statistics and interval endpoints remain in landscape.csv and report_all.csv; oriented_* columns give displayed values. SE is unchanged; ci_lo and ci_hi are correctly ordered individual 95% interval limits; p is the unchanged two-sided model p-value. Optional Bonferroni columns use the declared current-neighborhood and full-universe counts. These are sensitivity checks, not coefficient-bias corrections.</p>") else character()
   writeLines(c('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>AMPPS comparison record</title>',
     '<style>body{font:16px Georgia,serif;max-width:1100px;margin:45px auto;padding:0 24px;color:#222;line-height:1.6}h1{font-size:27px}h2{font-size:20px;border-top:1px solid #aaa;padding-top:16px}p{overflow-wrap:anywhere}.table-scroll{overflow-x:auto}table{border-collapse:collapse;font-size:12px;width:100%;border-top:1px solid #222;border-bottom:1px solid #222}th{text-align:left;border-bottom:1px solid #222}td,th{padding:6px;vertical-align:top}@media print{body{margin:0;max-width:none}}</style></head><body>',
     blocks,report_tables,'</body></html>'),file.path(stage,"report.html"),useBytes=TRUE)
@@ -133,6 +141,7 @@ export_bundle <- function(path, payload, data_files=NULL) {
     "reference <- read.csv('landscape.csv',check.names=FALSE)",
     "numeric <- intersect(c('n','df','b','se','ci_lo','ci_hi','t','p'),names(reference))",
     "print(all.equal(result[numeric],reference[numeric],tolerance=1e-8,check.attributes=FALSE))",
+    "if (!is.null(s$orientation)) { oriented <- orient_landscape(result, s$orientation); write.csv(oriented,'landscape_oriented_reproduced.csv',row.names=FALSE); if (file.exists('report_all.csv')) { rr <- read.csv('report_all.csv',check.names=FALSE); fields <- c('oriented_b','oriented_t','oriented_ci_lo','oriented_ci_hi'); stopifnot(isTRUE(all.equal(oriented[fields],rr[fields],tolerance=1e-8,check.attributes=FALSE))) } }",
     "# Frozen outcome correlation, weighted graph, membership, and boundary sets are in this bundle.",
     "# Recompute an uploaded-data EGA with: Rscript reproduce_network.R path/to/the_same_network.csv",
     "# Saved GSS respondent-level network cannot be recreated from annual analysis rows.",
@@ -180,6 +189,7 @@ export_bundle <- function(path, payload, data_files=NULL) {
     "",
     "Landscape estimates stay fixed when empirical neighborhood boundaries change.",
     "Observed |t| ranks describe the reconstructed sample. They are not effect-size ranks or cherry-picking verdicts.",
+    "orientation_key.csv and settings.json preserve the active display direction, higher-value meaning, status and source. documented_orientation_key.csv preserves the supplied semantic key even in original-coding view. landscape.csv preserves raw fits; report_all.csv also has oriented_* fields. Only explicit documented keys reverse signs. RC in the readable report means reverse-coded display direction; unverified/nonmonotone items remain original. This is a display transformation, not refitting, standardization or evidence of conceptual equivalence.",
     "Bonferroni columns, if requested, use declared family sizes including failed fits. Individual p-values still need valid model assumptions; coefficient selection bias is not removed.",
     "",
     "Read report.html in a browser for the full interpretation and comparison record; comparison_annotations.csv contains the focal/item/relation/reason annotations.",

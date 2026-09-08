@@ -2,7 +2,7 @@
 
 A four-step application for putting reported findings in the context of unreported outcomes in secondary data.
 
-**Research preview · 1.0.2-review.** This repository contains the app, small aggregate tutorial inputs, synthetic upload examples, and software tests. It does not contain the manuscript, reviewer correspondence, respondent-level GSS records, or private research files.
+**Research preview · 1.0.3-review.** This repository contains the app, small aggregate tutorial inputs, synthetic upload examples, and software tests. It does not contain the manuscript, reviewer correspondence, respondent-level GSS records, or private research files.
 
 ## Try the four steps
 
@@ -42,7 +42,8 @@ The deployed Linux build must be checked separately from the local tests. For a 
 - Retained graph edges are reweighted with zero-order outcome correlations. Distance length is `1/abs(r)`. Rings use the minimum path distance to any focal outcome and type-7 quantiles of finite nonfocal distances, retaining ties and all focal outcomes. All boundaries are exported.
 - A community comparison is the union of communities containing focal outcomes. Community membership does not establish conceptual equivalence or statistical exchangeability.
 - Regressions use one numeric predictor, optional shared numeric covariates, and optional supplied own-lag columns. Classical OLS and HC3 are supported; neither addresses serial dependence, survey design, or clustering automatically. Generalized, multilevel, and survey-weighted models are not implemented.
-- Coding is retained. Substantive direction must come from an explicitly documented codebook/theory decision, not a correlation or PCA rule. Original-unit coefficients should not be compared as if all outcomes had the same scale.
+- Original inputs and fits are retained. Step 3 defaults to **Display direction → Documented semantic key**, with an **Original coding** view available. The GSS key aligns six monotone items (HAPPY, HAPMAR, HEALTH, LIFE, SATJOB, NEWS; marked **RC**) and retains FINRELA's already-increasing direction. TRUST, FAIR and HELPFUL retain original coding because their `depends` category is not ordinal; FINALTER remains unverified because source and inherited recoding need reconciliation. The other outcomes remain original unless an explicit key is supplied. Alignment follows documented item meaning, never fitted signs, correlations or PCA. It does not make distinct constructs equivalent.
+- Coefficients, signed t statistics and both interval endpoints use the same direction key throughout the plots, tables, card and readable report. SE, p-values, |t|, sample sizes and raw fits stay unchanged. Exports retain raw plus `oriented_*` fields, the active key, and the documented key. Optional upload metadata may provide `orientation_multiplier` (-1/+1), `high_value_means`, and `orientation_source`; these are labeled user-declared.
 - Optional Bonferroni sensitivities name the boundary and complete analyzable universe separately. They assume valid individual tests and a justified family, do not debias coefficients, and are not cherry-picking verdicts. Rank-null testing is not part of this app.
 - Changing analysis settings invalidates old results and blocks export until recomputation. Boundary changes reuse the same fits and graph layout. Each session keeps its own uploaded data and annotations.
 
@@ -57,6 +58,7 @@ Rscript tests/test_server.R
 Rscript tests/test_provenance.R
 Rscript tests/test_input_export.R
 Rscript tests/test_review_ui.R
+Rscript tests/test_orientation.R
 ```
 
 The tests compare all 44 example fits against saved references; check 44 nodes, 262 edges, and the 11/10/14/18 community/ring sizes; execute live EGA on synthetic uploads; and verify state invalidation and export reproduction. Local compatibility guards for EGAnet 2.3.0 repair upstream small-network edge cases without modifying the installed namespace. Tests check agreement with the native algorithm where it works. These are software checks, not a claim that a recovered community is substantively correct.

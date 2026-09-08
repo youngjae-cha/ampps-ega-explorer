@@ -24,6 +24,67 @@ finite_rows <- function(data, columns) {
   Reduce(`&`, lapply(columns, function(nm) is.finite(data[[nm]])))
 }
 
+# Display orientation is an explicit measurement decision, never inferred from
+# fitted coefficients, correlations, or PCA. Raw fits and inputs stay unchanged.
+normalize_orientation_key <- function(key, items) {
+  out <- data.frame(item=items, multiplier=1, status="raw_unverified",
+    high_value_means="Original numerical coding (no display reversal)",
+    source="No orientation key supplied", stringsAsFactors=FALSE)
+  if (is.null(key)) return(out)
+  if (is.numeric(key)) {
+    if (is.null(names(key)) || anyDuplicated(names(key)) || anyNA(key) || any(!key %in% c(-1,1)))
+      stop("Orientation must be a unique named vector of -1 or +1.")
+    key <- data.frame(item=names(key), multiplier=unname(key), status="user_declared",
+      high_value_means="Direction specified by the supplied key", source="Explicit caller-supplied key")
+  }
+  required <- c("item", "multiplier", "status", "high_value_means", "source")
+  if (!is.data.frame(key) || !all(required %in% names(key)) || anyNA(key$item) ||
+      anyDuplicated(key$item) || any(!nzchar(trimws(key$item)))) stop("Orientation key needs unique items, multiplier, status, high_value_means, and source.")
+  key$multiplier <- suppressWarnings(as.numeric(key$multiplier))
+  if (anyNA(key$multiplier) || any(!key$multiplier %in% c(-1,1))) stop("Every orientation multiplier must be -1 or +1.")
+  for (field in c("status", "high_value_means", "source")) if (anyNA(key[[field]]) || any(!nzchar(trimws(key[[field]])))) stop(paste("Orientation key needs nonempty", field))
+  allowed <- key$status %in% c("verified", "user_declared")
+  if (any(key$multiplier != 1 & !allowed)) stop("Unverified outcomes must retain their original coding.")
+  matched <- match(out$item, key$item); hit <- !is.na(matched)
+  out[hit, required] <- key[matched[hit], required]
+  out
+}
+
+orientation_from_metadata <- function(metadata, items) {
+  if (is.null(metadata) || !"orientation_multiplier" %in% names(metadata)) return(NULL)
+  used <- !is.na(metadata$orientation_multiplier) & nzchar(trimws(as.character(metadata$orientation_multiplier)))
+  key <- metadata[used, ,drop=FALSE]
+  if (!nrow(key)) return(NULL)
+  if (!all(c("high_value_means", "orientation_source") %in% names(key)))
+    stop("An uploaded orientation key requires high_value_means and orientation_source with orientation_multiplier.")
+  normalize_orientation_key(data.frame(item=key$item, multiplier=key$orientation_multiplier,
+    status="user_declared", high_value_means=key$high_value_means, source=key$orientation_source), items)
+}
+
+orient_landscape <- function(landscape, key=NULL) {
+  out <- landscape
+  k <- normalize_orientation_key(key, out$item)
+  out$orientation_multiplier <- k$multiplier
+  out$orientation_status <- k$status
+  out$orientation_reversed <- k$multiplier == -1
+  out$high_value_means <- k$high_value_means
+  out$orientation_source <- k$source
+  out$oriented_b <- out$b*k$multiplier
+  out$oriented_t <- out$t*k$multiplier
+  out$oriented_ci_lo <- pmin(out$ci_lo*k$multiplier, out$ci_hi*k$multiplier)
+  out$oriented_ci_hi <- pmax(out$ci_lo*k$multiplier, out$ci_hi*k$multiplier)
+  out
+}
+
+display_oriented_estimates <- function(x) {
+  if (!"oriented_b" %in% names(x)) x <- orient_landscape(x)
+  for (field in c("b", "t", "ci_lo", "ci_hi")) {
+    x[[paste0("raw_", field)]] <- x[[field]]
+    x[[field]] <- x[[paste0("oriented_", field)]]
+  }
+  x
+}
+
 load_demo_data <- function(data_dir) {
   dat <- read.csv(file.path(data_dir, "gss_year.csv"), check.names=FALSE, na.strings=c("", "NA"))
   ref <- read.csv(file.path(data_dir, "landscape_reference.csv"), check.names=FALSE)
@@ -37,11 +98,14 @@ load_demo_data <- function(data_dir) {
   meta$domain[meta$item %in% c("Happy", "Hapmar", "Health", "Life", "Satjob")] <- "Well-being and related domains"
   meta$domain[meta$item %in% c("Trust", "Fair", "Helpful")] <- "Interpersonal attitudes"
   meta$domain[grepl("^Con", meta$item)] <- "Confidence in institutions"
-  list(data=dat, labels=labels, metadata=meta, provenance=c(
+  orientation <- normalize_orientation_key(read.csv(file.path(data_dir,"orientation_key.csv"), check.names=FALSE), items)
+  meta$coding_note <- paste0(ifelse(orientation$multiplier == -1,"RC: display direction reversed. ",""), orientation$high_value_means,
+    " [", orientation$status, "]")
+  list(data=dat, labels=labels, metadata=meta, orientation=orientation, provenance=c(
     "Built-in GSS tutorial: 47 annual aggregate rows and 44 outcomes, with supplied one-year lag columns.",
     "Annual derived values include inherited non-survey/missing-year values. No raw-to-derived interpolation algorithm is reconstructed by this app; source labels are bundled separately.",
     "The saved network is based on respondent-level outcome correlations; landscape estimates use annual aggregates. These are distinct analytic levels.",
-    "The app preserves original coding and displays signed estimates. Directional construct comparisons require a documented codebook/theory orientation key.",
+    "Original fits and inputs are preserved. The displayed coefficients, t statistics and intervals use the bundled semantic orientation key; RC marks reverse-coded directions. Unverified or nonmonotone items retain original coding and explicit notes.",
     "Classical OLS intervals reproduce the saved tutorial specification; they do not account for inherited interpolation or unmodeled serial dependence."
   ))
 }
@@ -141,7 +205,7 @@ make_report_tables <- function(landscape, focal, neighborhood, metadata=NULL, mu
   if (length(setdiff(focal, landscape$item))) stop("Every focal outcome must be retained in the landscape, including failed fits.")
   neighborhood <- unique(neighborhood)
   if (length(setdiff(neighborhood, landscape$item))) stop("Neighborhood contains items outside the fitted universe.")
-  out <- landscape
+  out <- orient_landscape(landscape, orientation)
   out$focal <- out$item %in% focal; out$in_neighborhood <- out$item %in% neighborhood
   out$abs_t <- abs(out$t)
   valid <- out$status == "ok" & is.finite(out$abs_t)
@@ -158,14 +222,6 @@ make_report_tables <- function(landscape, focal, neighborhood, metadata=NULL, mu
   }, integer(1))
   if (!is.null(metadata) && "item" %in% names(metadata)) {
     for (nm in setdiff(names(metadata), names(out))) out[[nm]] <- metadata[[nm]][match(out$item, metadata$item)]
-  }
-  if (!is.null(orientation)) {
-    if (is.null(names(orientation)) || any(!orientation %in% c(-1,1))) stop("Orientation must be a named vector of -1 or +1 defined from theory and coding.")
-    out$orientation_multiplier <- unname(orientation[out$item])
-    out$oriented_b <- out$b*out$orientation_multiplier
-    out$oriented_t <- out$t*out$orientation_multiplier
-    out$oriented_ci_lo <- pmin(out$ci_lo*out$orientation_multiplier, out$ci_hi*out$orientation_multiplier)
-    out$oriented_ci_hi <- pmax(out$ci_lo*out$orientation_multiplier, out$ci_hi*out$orientation_multiplier)
   }
   if (multiplicity) {
     out$bonferroni_universe_k <- nrow(landscape)
