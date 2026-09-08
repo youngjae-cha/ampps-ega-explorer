@@ -2,12 +2,12 @@
 
 A four-step application for putting reported findings in the context of unreported outcomes in secondary data.
 
-**Research preview · 1.0.3-review.** This repository contains the app, small aggregate tutorial inputs, synthetic upload examples, and software tests. It does not contain the manuscript, reviewer correspondence, respondent-level GSS records, or private research files.
+**Research preview · 1.0.4-review.** This repository contains the app, small aggregate tutorial inputs, synthetic upload examples, and software tests. It does not contain the manuscript, reviewer correspondence, respondent-level GSS records, or private research files.
 
 ## Try the four steps
 
-1. **Define:** start with the GSS worked example. HAPPY, TRUST, and FAIR are marked as focal outcomes. For your own data, select a numeric predictor and candidate outcomes.
-2. **Map:** inspect the EGA communities. Switch between community and 15/25/35% distance boundaries to see which alternatives enter the comparison.
+1. **Define:** specify the focal outcomes, predictor, and model. Include other candidate outcomes meeting the same coding and data-availability requirements. The supplied GSS example has these inputs prepared.
+2. **Map:** begin with the focal EGA communities, selected automatically. No distance setting is required. An optional collapsed section compares predefined 15/25/35% distance rings; all three are computed and exported. If you change the view, its label remains visible beside the map, with a button to return to the EGA communities.
 3. **Results:** compare reported and unreported outcomes, then read each original-unit coefficient with its interval. Absolute t is statistical prominence, not effect size.
 4. **Interpret & export:** describe what a comparison adds, distinguish related outcomes from justified substitutes, and download the complete estimates and reporting record.
 
@@ -59,6 +59,8 @@ Rscript tests/test_provenance.R
 Rscript tests/test_input_export.R
 Rscript tests/test_review_ui.R
 Rscript tests/test_orientation.R
+Rscript tests/test_navigation.R
+Rscript tests/test_boundary_ui.R
 ```
 
 The tests compare all 44 example fits against saved references; check 44 nodes, 262 edges, and the 11/10/14/18 community/ring sizes; execute live EGA on synthetic uploads; and verify state invalidation and export reproduction. Local compatibility guards for EGAnet 2.3.0 repair upstream small-network edge cases without modifying the installed namespace. Tests check agreement with the native algorithm where it works. These are software checks, not a claim that a recovered community is substantively correct.

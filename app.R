@@ -9,7 +9,7 @@ source(file.path("R", "ega.R"), local = TRUE)
 source(file.path("R", "export.R"), local = TRUE)
 options(shiny.maxRequestSize = 50 * 1024^2, shiny.sanitize.errors = TRUE)
 
-APP_VERSION <- "1.0.3-review"
+APP_VERSION <- "1.0.4-review"
 DEMO <- load_demo_data("data")
 DEMO_SOURCES <- read.csv(file.path("data", "gss_year_cell_source.csv"), check.names = FALSE)
 DEMO_NETWORK <- load_demo_network("data")
@@ -63,7 +63,7 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
   uiOutput("run_status"),
   tabsetPanel(id = "stage", type = "pills",
     tabPanel("1 · Define", value = "define",
-      lead(1, "What can be compared?", "Define the analyzable outcomes and mark the findings you want to understand."),
+      lead(1, "What can be compared?", "Start with the focal outcomes, predictor, and model. Include the other outcomes that meet the same analysis requirements."),
       fluidRow(column(4, div(class = "panel-card controls",
         radioButtons("source_mode", "Start with", c("GSS worked example" = "demo", "My CSV data" = "upload")),
         conditionalPanel("input.source_mode == 'demo'",
@@ -106,20 +106,26 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
         selectInput("timing", "Selection timing (your declaration)", c("Not documented here", "Before inspecting focal predictor results", "After inspecting some results", "Retrospective reconstruction"), selected = "Retrospective reconstruction"),
         textInput("record", "Dated record or source (optional)", "")),
         div(class = "panel-card", h3("Analyzable set"), uiOutput("scope_summary"), DTOutput("eligibility_table"),
-          help_box("What makes a fair comparison?", p("Eligibility uses data availability and coding, not whether a result is favorable. The same numeric regression specification is applied to every admitted outcome. You interpret conceptual and respondent differences in Step 4.")),
+          help_box("Which other outcomes can be compared?",
+            p("First specify the focal outcomes, predictor, and model. For a time-series analysis, prepare the intended years and lag columns in the input data. Apply the same coding and data-availability requirements to focal and comparison outcomes, including the minimum usable rows and missingness rule."),
+            p("Include every candidate meeting those requirements, whether or not the theory predicts an association. The exclusion record shows which outcomes could not be analyzed. EGA organizes the included outcomes in Step 2.")),
           next_btn("to_map", "Explore the map →"))))),
     tabPanel("2 · Map", value = "map",
-      lead(2, "What lies beside the focal outcomes?", "Use relationships among outcomes to organize alternatives before reading their predictor results."),
+      lead(2, "What lies beside the focal outcomes?", "Start with the communities EGA finds around the focal outcomes. The app selects these automatically; no distance setting is needed."),
       fluidRow(column(3, div(class = "panel-card controls",
-        selectInput("boundary", "Comparison boundary", c("Focal EGA communities" = "community", "Distance ring · 15%" = "ring15", "Distance ring · 25%" = "ring25", "Distance ring · 35%" = "ring35", "Full analyzable set" = "full")),
+        uiOutput("active_boundary"),
         uiOutput("network_method"),
-        help_box("How boundaries are calculated", p("A community view includes all communities containing a focal outcome. Rings use the shortest path to the nearest focal outcome, with retained edge length 1/|r|. Cutoffs are the 15th, 25th and 35th percentiles of finite nonfocal distances (type 7); ties are retained. All three are exported."),
-          p("Map coordinates are for display. The ring rule uses graph paths, not distances on the screen.")),
         next_btn("to_results", "View their results →"))),
       column(9, div(class = "panel-card", plotlyOutput("network_plot", height = "570px"),
         p(class = "figure-note", "Filled accent nodes: focal. Open accent nodes: current neighbors. Gray: other outcomes. Hover for labels and membership. Layout is fixed when boundaries change.")),
-        div(class = "panel-card", h3("Compare all boundaries"), uiOutput("boundary_notes"), DTOutput("boundary_table"),
-          p(class = "muted", "The fitted results stay fixed. These views change which alternatives are read together.")),
+        div(class = "panel-card", tags$details(id = "boundary_checks",
+          tags$summary("Optional: compare a narrower or wider neighborhood"),
+          p("A nearby outcome can fall just outside a community. These additional views show what enters or leaves when the comparison range changes. You can continue with the EGA community without opening this check."),
+          selectInput("boundary", "Additional comparison view", c("Focal EGA communities (default)" = "community", "Distance ring · 15%" = "ring15", "Distance ring · 25%" = "ring25", "Distance ring · 35%" = "ring35", "Full analyzable set" = "full"), selected = "community"),
+          p(class = "muted", "The selected view stays active if this section is closed. The current view is labeled beside the map. All three rings are calculated and exported automatically; fitted results stay fixed."),
+          uiOutput("boundary_notes"), DTOutput("boundary_table"),
+          help_box("Distance calculation", p("A community view includes all communities containing a focal outcome. Rings use the shortest path to the nearest focal outcome, with retained edge length 1/|r|. Cutoffs are the 15th, 25th and 35th percentiles of finite nonfocal distances (type 7); ties are retained. These are predefined sensitivity settings, not estimated optimal boundaries."),
+            p("Map coordinates are for display. The ring rule uses graph paths, not distances on the screen.")))),
         div(class = "panel-card", h3("Neighborhood and measurement details"), DTOutput("neighbor_table"))))),
     tabPanel("3 · Results", value = "results",
       lead(3, "What do the alternatives show?", "Read the fixed-model results alongside the EGA neighborhood, keeping each focal outcome visible."),
@@ -364,6 +370,9 @@ server <- function(input, output, session) {
       finally=session$sendCustomMessage("analysisBuildState", list(busy=FALSE)))
   })
   observeEvent(input$boundary, log_event("boundary_view", input$boundary), ignoreInit = TRUE)
+  observeEvent(input$reset_boundary, {
+    updateSelectInput(session, "boundary", selected = "community")
+  }, ignoreInit = TRUE)
   observeEvent(input$focal, log_event("focal_view", paste(input$focal, collapse = ", ")), ignoreInit = TRUE)
   observe({
     f <- focal(); a <- result(); al <- setdiff(neighborhood(), f)
@@ -404,6 +413,15 @@ server <- function(input, output, session) {
   output$scope_summary <- renderUI({a <- result(); p(paste(sum(a$eligibility$included), "outcomes included."),
     paste(sum(!a$eligibility$included), "excluded by recorded eligibility criteria."))})
   output$eligibility_table <- renderDT(datatable(result()$eligibility, rownames = FALSE, options = table_opts))
+  output$active_boundary <- renderUI({
+    selected <- input$boundary %or% "community"
+    label <- switch(selected, community = "EGA communities (default)",
+      ring15 = "Distance ring · 15%", ring25 = "Distance ring · 25%",
+      ring35 = "Distance ring · 35%", full = "Full analyzable set")
+    tagList(p(strong("Current comparison")), p(label),
+      p(class = "muted", paste(length(neighborhood()), "outcomes included.")),
+      if (selected != "community") actionButton("reset_boundary", "Return to EGA communities"))
+  })
   output$network_method <- renderUI({n <- result()$network
     tagList(p(strong(if (rv$settings$source == "demo") "Archived GSS EGA" else if (isTRUE(rv$settings$bootstrap)) "Bootstrap EGA · typical network" else "EGA preview · no bootstrap")),
       p(class = "muted", "Outcome relationships define this map. Focal predictor results appear in the next step."),

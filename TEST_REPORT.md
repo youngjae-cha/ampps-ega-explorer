@@ -1,6 +1,6 @@
 # Review-release checks
 
-Release: **1.0.3-review**. Local checks performed on 2026-09-08 with R 4.4.1 on macOS; direct package versions are in `package_versions.csv`, and the deployment dependency closure is in `manifest.json`.
+Release: **1.0.4-review**. Local checks performed on 2026-09-08 with R 4.4.1 on macOS; direct package versions are in `package_versions.csv`, and the deployment dependency closure is in `manifest.json`. The numerical/network modules are unchanged from 1.0.3. For this UI-only update, the server, input/export, review-UI, navigation, and new boundary-UI tests were rerun; other results below are retained regression evidence from 1.0.3.
 
 | Check | Local result |
 | --- | --- |
@@ -13,8 +13,11 @@ Release: **1.0.3-review**. Local checks performed on 2026-09-08 with R 4.4.1 on 
 | `tests/test_orientation.R` | Pass: six documented reversals, raw-fit preservation, correctly reversed interval endpoints, unchanged absolute t and p-values, explicit upload keys, and exported reproduction |
 | `tests/test_navigation.R` | Pass: successful demo/upload builds advance, failed builds stay put, busy state resets, and setting changes do not advance |
 | `tests/test_navigation.js` | Pass: immediate Next activation, top-of-step focus/scroll, reduced-motion behavior, and duplicate-build prevention |
+| `tests/test_boundary_ui.R` | Pass: community default, optional controls collapsed, current nondefault view and reset visible, all boundaries exported, and no model refitting |
 
 Local Chrome checks also confirmed successful Build → Map, Map → Results → Interpret, and switching between the documented and original coding views. HAPPY changes from original b = −.0076 to displayed b = +.0076 with the corresponding interval reversal; its absolute t remains 4.01. The deployed session is checked separately after publication.
+
+For 1.0.4, local Chrome additionally confirmed Define → Map → Results without touching distance settings; the default includes 11 community outcomes. Opening the optional check displays all four boundary rows. Choosing the 25% ring displays 14 outcomes, and closing the check leaves that choice visibly labeled beside the map. Return to EGA communities restores 11 outcomes. The documented display-direction view still marks reversed outcomes RC.
 
 Observed non-fatal warnings: ggplot2 was built with a newer R patch version; `geom_point` reports the Plotly hover-text aesthetic as unknown. Interactive plot outputs still render in the server tests. The deployed Linux runtime is a separate test target; these local passes are not evidence that a cloud build has succeeded.
 
