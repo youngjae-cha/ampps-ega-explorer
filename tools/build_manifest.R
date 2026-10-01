@@ -1,7 +1,7 @@
 # Run from the repository root after local tests pass.
 # An explicit allowlist keeps credentials, QA outputs, and private files out.
 options(repos = c(CRAN = "https://cloud.r-project.org"))
-app_files <- c("app.R", "package_versions.csv",
+app_files <- c("app.R", "package_versions.csv", "renv.lock",
   list.files("R", full.names = TRUE, pattern = "\\.R$"),
   list.files("www", full.names = TRUE, recursive = TRUE),
   list.files("data", full.names = TRUE, pattern = "\\.(csv|md)$"),

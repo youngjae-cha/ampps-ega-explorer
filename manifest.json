@@ -4372,6 +4372,37 @@
         "Archs": "rappdirs.so.dSYM"
       }
     },
+    "renv": {
+      "Source": "CRAN",
+      "Repository": "https://cloud.r-project.org",
+      "description": {
+        "Package": "renv",
+        "Type": "Package",
+        "Title": "Project Environments",
+        "Version": "1.1.4",
+        "Authors@R": "c(\n    person(\"Kevin\", \"Ushey\", role = c(\"aut\", \"cre\"), email = \"kevin@rstudio.com\",\n           comment = c(ORCID = \"0000-0003-2880-7407\")),\n    person(\"Hadley\", \"Wickham\", role = c(\"aut\"), email = \"hadley@rstudio.com\",\n           comment = c(ORCID = \"0000-0003-4757-117X\")),\n    person(\"Posit Software, PBC\", role = c(\"cph\", \"fnd\"))\n    )",
+        "Description": "A dependency management toolkit for R. Using 'renv', you can create\n    and manage project-local R libraries, save the state of these libraries to\n    a 'lockfile', and later restore your library as required. Together, these\n    tools can help make your projects more isolated, portable, and reproducible.",
+        "License": "MIT + file LICENSE",
+        "URL": "https://rstudio.github.io/renv/, https://github.com/rstudio/renv",
+        "BugReports": "https://github.com/rstudio/renv/issues",
+        "Imports": "utils",
+        "Suggests": "BiocManager, cli, compiler, covr, cpp11, devtools, gitcreds,\njsonlite, jsonvalidate, knitr, miniUI, modules, packrat, pak,\nR6, remotes, reticulate, rmarkdown, rstudioapi, shiny,\ntestthat, uuid, waldo, yaml, webfakes",
+        "Encoding": "UTF-8",
+        "RoxygenNote": "7.3.2",
+        "VignetteBuilder": "knitr",
+        "Config/Needs/website": "tidyverse/tidytemplate",
+        "Config/testthat/edition": "3",
+        "Config/testthat/parallel": "true",
+        "Config/testthat/start-first": "bioconductor,python,install,restore,snapshot,retrieve,remotes",
+        "NeedsCompilation": "no",
+        "Packaged": "2025-03-20 16:43:40 UTC; kevin",
+        "Author": "Kevin Ushey [aut, cre] (<https://orcid.org/0000-0003-2880-7407>),\n  Hadley Wickham [aut] (<https://orcid.org/0000-0003-4757-117X>),\n  Posit Software, PBC [cph, fnd]",
+        "Maintainer": "Kevin Ushey <kevin@rstudio.com>",
+        "Repository": "CRAN",
+        "Date/Publication": "2025-03-20 18:10:01 UTC",
+        "Built": "R 4.4.1; ; 2025-03-20 18:19:24 UTC; unix"
+      }
+    },
     "reshape2": {
       "Source": "CRAN",
       "Repository": "https://cloud.r-project.org",
@@ -5373,7 +5404,7 @@
   },
   "files": {
     "app.R": {
-      "checksum": "af881bae40940e76c8311dda91e06810"
+      "checksum": "bb6e7c207f6acb5a7a80285cd84fc061"
     },
     "data/effect_landscape.csv": {
       "checksum": "2d5d34ded219c5888c4955ae18314934"
@@ -5412,19 +5443,31 @@
       "checksum": "21b0612d5c7efad128cfda3dd243f828"
     },
     "package_versions.csv": {
-      "checksum": "fc1d6081a5c19d527f32b9a4d0084149"
+      "checksum": "8a9b9497f218b35b9fbc10dcbab95372"
+    },
+    "R/comparison.R": {
+      "checksum": "55f82dcfe0f3fae459600ede924db934"
+    },
+    "R/concentration.R": {
+      "checksum": "43e7dea732f2d86a02affa4d4b51029f"
     },
     "R/ega.R": {
       "checksum": "6648b6ed46300736700c35ad8509548e"
     },
     "R/export.R": {
-      "checksum": "1cbf2dbc581ffdbdbfa2444101ebd1b2"
+      "checksum": "1cf01c7a43265663a4b55586076506c2"
     },
     "R/model.R": {
       "checksum": "b8f494849f8f8e1dd83a7dd4f7f86cef"
     },
     "R/provenance.R": {
       "checksum": "7b3fce6821c78ab85e17f2f92fc19344"
+    },
+    "R/runtime.R": {
+      "checksum": "10cafd45c3913062dd2265695fce62b2"
+    },
+    "renv.lock": {
+      "checksum": "991ff27ca753ff2f361145badbe684fb"
     },
     "www/app.css": {
       "checksum": "a929d27361d2552286e393ab13032075"

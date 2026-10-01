@@ -10,6 +10,7 @@
 rsconnect/
 renv/library/
 renv/staging/
+.library/
 qa/
 release/
 *.log

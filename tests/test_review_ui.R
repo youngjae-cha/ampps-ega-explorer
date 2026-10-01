@@ -23,6 +23,9 @@ shiny::testServer(app_env$server, {
     reports()$focal$b[reports()$focal$item=="Happy"]<0,
     reports()$focal$oriented_b[reports()$focal$item=="Happy"]>0,
     grepl("Happy [RC]: b = 0.0076",paste(report_text(),collapse=" "),fixed=TRUE))
+  stopifnot(inherits(output$distribution_plot,"json"),
+    nrow(distribution_data())==44L,
+    identical(as.integer(table(factor(distribution_data()$group,levels=c("Reported","Unreported neighbors","Other outcomes")))),c(3L,8L,33L)))
   before <- result()$landscape
   session$setInputs(orientation_mode="original")
   stopifnot(!dirty(),identical(before,result()$landscape),

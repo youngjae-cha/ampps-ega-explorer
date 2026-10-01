@@ -43,6 +43,14 @@ export_bundle <- function(path, payload, data_files=NULL) {
   reports <- payload[["report"]]
   if (!is.null(reports)) for (key in intersect(names(reports), c("focal", "alternatives", "all"))) csv(reports[[key]], paste0("report_",key,".csv"))
   settings <- payload$settings
+  concentration <- payload[["concentration_reference"]]
+  if (!is.null(concentration)) {
+    settings$concentration_reference <- concentration
+    csv(concentration$statistics, "reference_statistics.csv")
+    csv(concentration$result$distribution, "reference_distribution.csv")
+    jsonlite::write_json(concentration, file.path(stage, "reference.json"),
+      auto_unbox=TRUE, pretty=TRUE, null="null", digits=NA)
+  }
   if (!is.null(orientation)) settings$orientation <- orientation
   # Machine-readable settings preserve literal identifiers; spreadsheet-safe CSV labels may be escaped.
   if (is.null(settings$model)) settings$measures <- as.character(payload$landscape$item) else settings$model$measures <- as.character(payload$landscape$item)
@@ -111,6 +119,11 @@ export_bundle <- function(path, payload, data_files=NULL) {
     blocks,report_tables,'</body></html>'),file.path(stage,"report.html"),useBytes=TRUE)
   writeLines(capture.output(sessionInfo()),file.path(stage,"session_info.txt"))
   source_dir <- if (nzchar(.ampps_export_source)) dirname(.ampps_export_source) else file.path(getwd(),"R")
+  for (record in c("renv.lock", "package_versions.csv")) {
+    src <- file.path(dirname(source_dir), record)
+    if (file.exists(src) && !file.copy(src, file.path(stage, record)))
+      stop("Cannot include software version record: ", record)
+  }
   if (identical(settings[["network"]]$source,"bundled_demo")) {
     cell_source <- file.path(dirname(source_dir),"data","gss_year_cell_source.csv")
     if (!file.exists(cell_source)) stop("Bundled GSS cell-source provenance file is missing.")
@@ -123,6 +136,27 @@ export_bundle <- function(path, payload, data_files=NULL) {
     src <- file.path(source_dir,module)
     if (!file.exists(src)) stop(paste("Cannot export reproducibility module:",module))
     file.copy(src,file.path(stage,"R",module))
+  }
+  if (!is.null(concentration)) {
+    src <- file.path(source_dir, "concentration.R")
+    if (!file.copy(src, file.path(stage, "R", "concentration.R")))
+      stop("Cannot include the concentration calculation in the export.")
+    writeLines(c(
+      "# Reproduce the conditional reference from the recorded fixed statistics.",
+      "# Run in the unzipped directory: Rscript reproduce_reference.R",
+      "source('R/concentration.R')",
+      "ref <- jsonlite::read_json('reference.json', simplifyVector=TRUE)",
+      "s <- setNames(ref$statistics$statistic, ref$statistics$item)",
+      "out <- exact_concentration(s, as.character(unlist(ref$selected)), max_subsets=max(200000, ref$result$n_subsets), alpha=ref$result$alpha)",
+      "fields <- c('rank_sum','p_ref','minimum_reference','attainable_rate','n_subsets')",
+      "stopifnot(isTRUE(all.equal(unlist(out[fields]), unlist(ref$result[fields]), tolerance=1e-12, check.attributes=FALSE)))",
+      "stopifnot(isTRUE(all.equal(out$distribution, ref$result$distribution, tolerance=1e-12, check.attributes=FALSE)))",
+      "write.csv(out$distribution, 'reference_distribution_reproduced.csv', row.names=FALSE)",
+      "cat('PASS: rank sum, reference p, tied minimum, attainable rate, and full distribution reproduced.\\n')",
+      "# The reporting/symmetry condition and independent-specification rationale",
+      "# are researcher declarations in reference.json; reproducing arithmetic",
+      "# does not verify those declarations."
+    ), file.path(stage, "reproduce_reference.R"))
   }
   repro <- c(
     "# Run from this unzipped directory: Rscript reproduce.R [path/to/analysis.csv]",
@@ -193,13 +227,14 @@ export_bundle <- function(path, payload, data_files=NULL) {
     "Bonferroni columns, if requested, use declared family sizes including failed fits. Individual p-values still need valid model assumptions; coefficient selection bias is not removed.",
     "",
     "Read report.html in a browser for the full interpretation and comparison record; comparison_annotations.csv contains the focal/item/relation/reason annotations.",
+    if (!is.null(concentration)) "The concentration reference is recorded in reference.json, reference_statistics.csv, and reference_distribution.csv. Run Rscript reproduce_reference.R to reproduce its exact conditional calculation without raw input rows. The report retains the declared family, reported subset, ranking direction, reporting/symmetry condition, and justification." else "No concentration reference probability is attached to this comparison. Estimates, ranks and measurement notes remain available.",
     "Reproduction: install R and jsonlite, unzip, then run Rscript reproduce.R path/to/the_same_analysis.csv.",
     "If explicitly included, inputs/analysis_input.csv is used automatically. Raw user rows are excluded by default.",
     "The exact graph, original weights, outcome correlations, community membership, and boundaries are preserved for inspection. To rerun a computed EGA: Rscript reproduce_network.R path/to/the_same_network.csv. This requires EGAnet, igraph, the same network rows, and the recorded options. The script uses recorded parameters rather than guessing defaults.",
     "The annual GSS analysis input does not reconstruct its respondent-level network. The tutorial's saved network and annual inputs have distinct provenance.",
     if (!is.null(input_audit)) "GSS input sensitivity: input_source_counts.csv counts actual primary and restricted rows; input_sensitivity_extract.csv refits the current-outcome extract restriction with supplied lags unchanged. Run Rscript reproduce_input_sensitivity.R to reproduce it. This is not effective-N estimation, serial-dependence correction, or a reconstruction of interpolation." else character(),
     "",
-    "settings.json contains model settings and recorded provenance. session_info.txt records local packages. R/ contains the numerical and network source used by this app.",
+    "settings.json contains model settings and recorded provenance. session_info.txt records the actual execution environment; renv.lock and package_versions.csv record the tested application environment. R/ contains the numerical and network source used by this app.",
     "Outcome text exported to result CSVs is escaped against spreadsheet formulas; explicitly opted-in input CSVs remain byte-for-byte copies.",
     "This archive was created by the app's analysis server for download. In a hosted session, uploaded or pasted data are transmitted to that host. User input rows are included in this archive only when explicitly requested; use public or synthetic data on the shared research preview."
   )

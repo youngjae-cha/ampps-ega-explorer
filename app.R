@@ -1,4 +1,5 @@
 # AMPPS Explorer: the same four-step workflow locally or on a Shiny host.
+if (dir.exists(".library")) .libPaths(c(normalizePath(".library"), .libPaths()))
 library(shiny)
 library(ggplot2)
 library(plotly)
@@ -7,9 +8,11 @@ source(file.path("R", "model.R"), local = TRUE)
 source(file.path("R", "provenance.R"), local = TRUE)
 source(file.path("R", "ega.R"), local = TRUE)
 source(file.path("R", "export.R"), local = TRUE)
+source(file.path("R", "concentration.R"), local = TRUE)
+source(file.path("R", "comparison.R"), local = TRUE)
 options(shiny.maxRequestSize = 50 * 1024^2, shiny.sanitize.errors = TRUE)
 
-APP_VERSION <- "1.0.4-review"
+APP_VERSION <- "3.0.0"
 DEMO <- load_demo_data("data")
 DEMO_SOURCES <- read.csv(file.path("data", "gss_year_cell_source.csv"), check.names = FALSE)
 DEMO_NETWORK <- load_demo_network("data")
@@ -58,8 +61,8 @@ display_estimates <- function(x, all = FALSE) {
 ui <- fluidPage(title = "AMPPS EGA Explorer",
   tags$head(tags$link(rel = "stylesheet", href = "app.css"), tags$script(src = "app.js")),
   div(class = "masthead", div(div(class = "eyebrow", "AMPPS · POST-HOC MULTIVERSE ANALYSIS"),
-      h1("EGA Explorer"), p("Put reported findings in the context of what remains.")),
-      div(class = "local-badge", "Research preview", tags$small("Use public or synthetic data only"))),
+      h1("EGA Explorer"), p("Compare reported findings with available alternatives to examine support for a claim and possible selective reporting.")),
+      div(class = "local-badge", "Research application", tags$small("Use public or synthetic data only"))),
   uiOutput("run_status"),
   tabsetPanel(id = "stage", type = "pills",
     tabPanel("1 · Define", value = "define",
@@ -131,17 +134,20 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
       lead(3, "What do the alternatives show?", "Read the fixed-model results alongside the EGA neighborhood, keeping each focal outcome visible."),
       fluidRow(column(3, div(class = "panel-card controls",
         radioButtons("result_scope", "Show", c("Current map boundary" = "local", "All analyzable outcomes" = "all")),
-        radioButtons("plot_metric", "Display", c("Compare statistical prominence |t|" = "abs_t", "Signed t-statistic" = "t", "Estimate with 95% interval" = "b")),
+        radioButtons("plot_metric", "Display", c("Order results by absolute t" = "abs_t", "Signed t-statistic" = "t", "Estimate with 95% interval" = "b")),
         radioButtons("orientation_mode", "Display direction", c("Documented semantic key"="documented", "Original coding"="original"), selected="documented"),
         checkboxInput("multiplicity", "Show optional Bonferroni sensitivity", FALSE),
-        help_box("Reading the display", p("Absolute t orders statistical prominence, not effect magnitude. RC marks directions reversed using a documented semantic key, never the result's sign. Original coefficients remain in the downloads; unverified or nonmonotone items retain original coding."),
+        help_box("Reading the display", p("Absolute t orders each estimate relative to its standard error. Read magnitude and direction from the coefficients and intervals. RC marks directions reversed using a documented semantic key. Original coefficients remain in the downloads; unverified or nonmonotone items retain original coding."),
           p("Check the higher-value meaning for each outcome. Coding alignment preserves its units but does not make different constructs equivalent.")),
         conditionalPanel("input.multiplicity", p(class = "muted", "Two declared families are shown separately: the current boundary and the full analyzable set. These are regression p-value sensitivities, not selection verdicts. Valid individual tests and a justified family remain necessary.")),
         downloadButton("download_plot", "Download result plot (PDF)"),
         next_btn("to_interpret", "Interpret and report →"))),
       column(9, conditionalPanel("input.plot_metric == 'abs_t'",
-        div(class="panel-card", id="reading_combined", h3("Read the neighborhood in two ways"),
-          p(class="reading-intro", "Left: compare statistical prominence. Right: read estimates and intervals in each outcome's units, using the selected display direction."),
+        div(class="panel-card", h3("Where do the reported results fall?"),
+          plotlyOutput("distribution_plot", height="330px"),
+          p(class="figure-note", "Raw points and box plots show absolute t for reported outcomes, unreported neighbors, and other analyzable outcomes. The groups organize the comparison; the reference calculation below uses an explicitly specified set.")),
+        div(class="panel-card", id="reading_combined", h3("Read the individual results"),
+          p(class="reading-intro", "Compare positions by absolute t, then read each coefficient and interval in its outcome's units and documented direction."),
           uiOutput("combined_estimates"),
           p(class="reading-intro", "Filled points mark focal outcomes; open points mark unreported alternatives. |t| compares an estimate with its standard error, not effect magnitude."),
           p(class="reading-intro", "RC = reverse-coded display direction. Higher-value meanings appear beside each estimate. Original marks an unreversed direction, either because the key is unresolved or Original coding is selected; consult the item notes."))),
@@ -156,11 +162,34 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
           p(class = "reading-intro", "When the documented key is selected, a positive coefficient points toward the stated higher-value meaning for aligned items. Original-coded items require their separate coding notes."))),
         div(class = "panel-card", h3("Every focal outcome"), DTOutput("focal_table")),
         uiOutput("input_sensitivity_panel"),
-        div(class = "panel-card", h3("Full estimates"), DTOutput("landscape_table"))))),
+        div(class = "panel-card", h3("Full estimates"), DTOutput("landscape_table")),
+        div(class = "panel-card", id="reference_panel", h3("Are reported results concentrated near the top?"),
+          p("The rank-sum reference quantifies concentration within a specified comparison set. Use it alongside the estimates and measurement information to examine result-based selection and other explanations."),
+          uiOutput("reference_status"),
+          conditionalPanel("input.source_mode == 'upload'",
+            selectizeInput("reference_family", "Comparison set for this claim", choices=character(), multiple=TRUE),
+            selectizeInput("reference_selected", "Reported outcomes for this claim (a subset of the focal outcomes)", choices=character(), multiple=TRUE),
+            selectInput("reference_statistic", "Ranking statistic specified for this comparison",
+              c("Choose a statistic"="", "Absolute t"="abs_t", "Signed t: positive direction"="positive_t", "Signed t: negative direction"="negative_t")),
+            p(class="muted", "Signed t uses the recorded display direction. Changing that direction requires recalculation."),
+            textAreaInput("reference_claim", "Claim addressed by this comparison", rows=2, width="100%"),
+            selectInput("reference_condition", "Statistical condition justified for this set",
+              c("Choose a condition"="", "Uniform reporting among equal-sized subsets"="uniform", "Joint label symmetry for a fixed report"="symmetry")),
+            help_box("What do these conditions mean?",
+              p("Uniform reporting: conditional on the observed statistics, every same-sized subset has equal reporting probability independently of those statistics."),
+              p("Fixed-label symmetry: with reported labels fixed, the joint distribution of the statistics is invariant to permutations of candidate labels."),
+              p("Justify the statistical condition separately from the substantive comparison. Advance selection, a shared construct, and EGA membership each provide context; measurement quality or expected associations can favor particular ranks.")),
+            textAreaInput("reference_justification", "Why is this statistical condition defensible?", rows=3, width="100%"),
+            textAreaInput("reference_design", "How were the set and statistic specified independently of the focal predictor results?", rows=2, width="100%"),
+            checkboxInput("reference_independent", "I specified this set and statistic independently of the focal predictor results.", FALSE),
+            actionButton("calculate_reference", "Calculate rank-sum reference", class="btn-primary"),
+            actionButton("clear_reference", "Clear reference")),
+          uiOutput("reference_result"))))),
     tabPanel("4 · Interpret & export", value = "interpret",
       lead(4, "What do these comparisons add?", "Connect the reported findings to unreported outcomes, their measurement context, and the questions worth pursuing next."),
       fluidRow(column(8, div(class = "panel-card", id="completed_comparison_panel", h3("From the EGA neighborhood to an interpretation"),
-          uiOutput("completed_comparison")),
+          uiOutput("completed_comparison"), uiOutput("rank_pattern")),
+        div(class="panel-card", h3("Concentration reference and its interpretation"), uiOutput("reference_report")),
         div(class = "panel-card", h3("Every focal outcome remains in the record"), uiOutput("report_preview")),
         div(class = "panel-card", h3("Explain a comparison"),
           fluidRow(column(6, selectInput("annotation_focal", "Focal outcome", choices = c("Happy", "Trust", "Fair"))),
@@ -169,7 +198,7 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
           textAreaInput("relation_reason", "Measurement or population justification", rows = 2, width = "100%"),
           actionButton("save_annotation", "Save comparison note"), DTOutput("annotations_table")),
         div(class = "panel-card", h3("Your interpretation"),
-          textAreaInput("interpretation", "What is supported, qualified, or newly suggested?", rows = 4, width = "100%", placeholder = "Describe what the alternatives add to each focal finding. Keep exploratory observations distinct from later confirmation."))),
+          textAreaInput("interpretation", "What is supported, qualified, or newly suggested?", rows = 4, width = "100%", placeholder = "Explain whether support extends to same-claim alternatives, where the explanation applies, and what new questions arise. For results that stand out, consider result-based selection, measurement quality, underlying associations, and comparison-set composition."))),
       column(4, div(class = "panel-card controls", h3("Take the analysis with you"),
         p("Download the full estimates, every map boundary, measurement notes, analysis settings, network, and a readable report."),
         checkboxInput("include_inputs", "Also include my uploaded input files in the ZIP", FALSE),
@@ -187,6 +216,7 @@ server <- function(input, output, session) {
   rv <- reactiveValues(result = NULL, settings = NULL, error = NULL, upload = NULL,
     network_upload = NULL, metadata_upload = NULL, inputs = list(), events = list(),
     annotations = data.frame(focal = character(), item = character(), relation = character(), reason = character()),
+    reference = NULL, reference_error = NULL,
     source_id = "bundled_gss", network_id = "", metadata_id = "", upload_label = "My data")
   log_event <- function(action, detail = "") {
     rv$events <- append(isolate(rv$events), list(list(time_utc = format(Sys.time(), tz = "UTC", usetz = TRUE), action = action, detail = detail)))
@@ -233,6 +263,70 @@ server <- function(input, output, session) {
   display_key <- reactive(if (identical(input$orientation_mode,"original")) NULL else result()$orientation)
   reports <- reactive(make_report_tables(result()$landscape, focal(), neighborhood(), result()$metadata,
                                           multiplicity = isTRUE(input$multiplicity), orientation=display_key()))
+  reference_config <- reactive(list(
+    family=sort(input$reference_family %or% character()), selected=sort(input$reference_selected %or% character()),
+    statistic=input$reference_statistic %or% "", condition=input$reference_condition %or% "",
+    justification=input$reference_justification %or% "", design_record=input$reference_design %or% "",
+    independent=isTRUE(input$reference_independent), claim=input$reference_claim %or% "",
+    orientation=normalize_orientation_key(display_key(), result()$measures),
+    source=rv$settings, landscape=result()$landscape, focal=sort(focal()),
+    boundary=input$boundary %or% "community", question=input$question %or% ""))
+  current_reference <- reactive({
+    result()
+    if (identical(rv$settings$source, "demo") || is.null(rv$reference) ||
+        !identical(rv$reference$config, reference_config())) return(NULL)
+    rv$reference$record
+  })
+  observe({
+    a <- result()
+    updateSelectizeInput(session, "reference_family", choices=a$measures,
+      selected=intersect(isolate(input$reference_family), a$measures))
+    updateSelectizeInput(session, "reference_selected", choices=focal(),
+      selected=intersect(isolate(input$reference_selected), focal()))
+  })
+  observeEvent(input$calculate_reference, {
+    rv$reference <- NULL; rv$reference_error <- NULL
+    tryCatch({
+      a <- result()
+      if (identical(rv$settings$source, "demo"))
+        stop("The GSS example uses estimates and ranks without a reference probability; its reporting or symmetry condition has not been justified.")
+      cfg <- reference_config()
+      if (!all(cfg$selected %in% focal())) stop("Select reported outcomes from the current focal set.")
+      record <- make_reference_record(display_oriented_estimates(reports()$all),
+        cfg$family, cfg$selected, cfg$statistic, cfg$condition, cfg$justification,
+        cfg$design_record, cfg$independent, cfg$claim, cfg$orientation)
+      rv$reference <- list(config=cfg, record=record)
+      log_event("reference_calculated", paste(record$result$k, "candidates;", record$result$m, "reported outcomes"))
+    }, error=function(e) {rv$reference_error <- conditionMessage(e)})
+  })
+  observeEvent(input$clear_reference, {
+    rv$reference <- NULL; rv$reference_error <- NULL
+    log_event("reference_cleared")
+  })
+  output$reference_status <- renderUI({
+    a <- result()
+    if (identical(rv$settings$source, "demo")) return(p(class="muted",
+      "GSS example: compare the estimates, ranks, and item meanings. These outcomes differ in content, response formats, and respondent groups; neither uniform reporting nor joint label symmetry has been established. This example therefore reports the comparison without a reference probability."))
+    tagList(if (!is.null(rv$reference_error)) p(class="notice", rv$reference_error),
+      if (!is.null(rv$reference) && is.null(current_reference())) p(class="notice", "Comparison settings changed. Recalculate to include a reference in the report."),
+      p(class="muted", "Choose the comparison set and reported subset explicitly. The app records your justification; it cannot establish the assumption from the results."))
+  })
+  output$reference_result <- renderUI({
+    r <- current_reference()
+    if (is.null(r)) return(NULL)
+    z <- r$result
+    tagList(p(strong(sprintf("Reference p = %.6g", z$p_ref)),
+      sprintf(" · Rank sum W = %s · %d reported / %d candidates", format(z$rank_sum), z$m, z$k)),
+      p(sprintf("Exact enumeration: %s subsets. Smallest attainable p = %.6g. Attainable rate at alpha = .05: %.6g.", format(z$n_subsets, scientific=FALSE), z$minimum_reference, z$attainable_rate)),
+      if (z$minimum_reference > .05) p("This set cannot reach the .05 cutoff. Its estimates, ranks, and reference value still describe the comparison."),
+      p("Interpret this concentration alongside measurement quality, expected associations, comparison-set composition, and selection records. The recorded condition and calculation are included in Interpret & export."))
+  })
+  output$reference_report <- renderUI(tagList(lapply(reference_report_text(current_reference())[-1], p)))
+  current_rank_pattern <- reactive(tryCatch(rank_pattern(result()$landscape, neighborhood(), focal()),
+    error=function(e) list(text=paste("Rank comparison:", conditionMessage(e)))))
+  output$rank_pattern <- renderUI(tagList(h4("What the observed ordering shows"), p(current_rank_pattern()$text),
+    p("For defensible alternatives addressing the same claim, examine how much support depends on the measures selected. Related outcomes can clarify the explanation's scope or motivate follow-up.")))
+
   active_annotations <- reactive({
     a <- result(); x <- rv$annotations
     x[x$focal %in% focal() & x$item %in% a$measures & !x$item %in% focal(), , drop = FALSE]
@@ -243,6 +337,7 @@ server <- function(input, output, session) {
     updateCheckboxInput(session, "include_inputs", value = FALSE)
   }
   load_demo <- function() {
+    rv$reference <- NULL; rv$reference_error <- NULL
     led <- audit_universe(DEMO$data, DEMO_ITEMS, "MobilityLag", own_lag = TRUE, max_missing = .2)
     ls <- fit_landscape(DEMO$data, DEMO_ITEMS, "MobilityLag", own_lag = TRUE, missing = "common")
     rv$result <- list(data = DEMO$data, landscape = ls, network = DEMO_NETWORK, metadata = DEMO$metadata, orientation=DEMO$orientation,
@@ -360,6 +455,7 @@ server <- function(input, output, session) {
           eligibility = led, label = rv$upload_label, provenance = "User-supplied CSV; no imputation. Source and selection descriptions are user declarations.",
           model = cf[c("predictor", "covariates", "own_lag", "lag_suffix", "missing", "se_method")])
         rv$settings <- cf; rv$error <- NULL
+        rv$reference <- NULL; rv$reference_error <- NULL
         sel <- intersect(isolate(input$focal), ms); if (!length(sel)) sel <- head(ms, 1)
         updateSelectizeInput(session, "focal", choices = ms, selected = sel)
         incProgress(.75, "Ready")
@@ -424,7 +520,7 @@ server <- function(input, output, session) {
   })
   output$network_method <- renderUI({n <- result()$network
     tagList(p(strong(if (rv$settings$source == "demo") "Archived GSS EGA" else if (isTRUE(rv$settings$bootstrap)) "Bootstrap EGA · typical network" else "EGA preview · no bootstrap")),
-      p(class = "muted", "Outcome relationships define this map. Focal predictor results appear in the next step."),
+      p(class = "muted", "EGA connects measures that covary and locates unreported measures to compare. Shared constructs, related domains, response formats, or respondent groups can contribute to these connections. Item content guides their interpretation."),
       help_box("Network source and stability", p(n$method), p(paste(n$provenance, collapse = " ")),
         if (length(n$warnings)) p(paste(n$warnings, collapse = " "))))})
   output$boundary_notes <- renderUI({
@@ -500,7 +596,7 @@ server <- function(input, output, session) {
       geom_point(aes(x = abs(t), text = hover, shape = role), size = 3.2, stroke = 1.2) +
       scale_shape_manual(values = c("Focal" = 16, "Unreported alternative" = 1)) +
       scale_x_continuous(limits = c(0, NA), expand = expansion(mult = c(.01, .08))) +
-      labs(x = "Absolute t-statistic |t| · statistical prominence", shape = NULL)
+      labs(x = "Absolute t-statistic |t| · estimate relative to SE", shape = NULL)
     else g <- ggplot(x, aes(y = readable_display, color = role)) + geom_vline(xintercept = 0, color = "#aebabb", linewidth = .4) +
       geom_point(aes(x = t, text = hover), size = 2.8) + labs(x = "Displayed signed t · ordered by absolute t")
     g + scale_color_manual(values = c("Focal" = ACCENT, "Unreported alternative" = "#778b91")) +
@@ -514,6 +610,30 @@ server <- function(input, output, session) {
     plotlyOutput("landscape_plot", height = paste0(height, "px"))
   })
   output$landscape_plot <- renderPlotly(ggplotly(result_ggplot(), tooltip = "text") %>% plotly::config(displaylogo = FALSE))
+  distribution_data <- reactive({
+    x <- result()$landscape
+    x <- x[is.finite(x$t), , drop=FALSE]
+    x$group <- ifelse(x$item %in% focal(), "Reported", ifelse(x$item %in% neighborhood(), "Unreported neighbors", "Other outcomes"))
+    x$hover <- paste0(htmltools::htmlEscape(x$item), "<br>|t| = ", fmt(abs(x$t)))
+    x
+  })
+  output$distribution_plot <- renderPlotly({
+    x <- distribution_data()
+    colors <- c("Reported"=ACCENT, "Unreported neighbors"="#778b91", "Other outcomes"="#afb9bd")
+    p <- plotly::plot_ly()
+    for (group in names(colors)) {
+      rows <- x[x$group==group,,drop=FALSE]
+      if (!nrow(rows)) next
+      p <- plotly::add_boxplot(p, y=abs(rows$t), name=group, text=rows$hover,
+        hoverinfo="text", boxpoints="all", jitter=.3, pointpos=0, quartilemethod="linear",
+        line=list(color=unname(colors[group])), marker=list(color=unname(colors[group]),size=6),
+        showlegend=FALSE)
+    }
+    plotly::layout(p, yaxis=list(title="Absolute t", rangemode="tozero"),
+      xaxis=list(title="",categoryorder="array",categoryarray=names(colors)),
+      margin=list(l=55,r=15,t=15,b=65),paper_bgcolor="white",plot_bgcolor="white") %>%
+      plotly::config(displaylogo=FALSE)
+  })
   output$combined_estimates <- renderUI({
     x <- plot_data(); x <- x[rev(seq_len(nrow(x))), , drop=FALSE]
     validate(need(nrow(x), "No estimable results in this view."))
@@ -611,7 +731,7 @@ server <- function(input, output, session) {
         "], t = ", fmt(r$t), ", p = ", fmt(r$p, 5), ", n = ", r$n, ". The interval ", if (excludes) "excludes" else "includes", " zero. ",
         length(higher), if (length(higher) == 1L) " unreported outcome in this view has larger absolute t" else " unreported outcomes in this view have larger absolute t", if (length(higher)) paste0(": ", paste(higher, collapse = ", ")) else "", ". Higher-value meaning: ",r$high_value_means," (",r$orientation_status,")."))
     }
-    txt <- c(txt, "", paste0("Display direction: ", if (identical(input$orientation_mode,"original")) "Original coding" else "Documented semantic key", ". These are observed estimates using the selected display direction. RC marks reversed coefficients, t statistics and intervals; raw fits remain in the downloads. Items without a verified or explicitly declared key retain original coding, as do all items when Original coding is selected. Absolute t and p-values do not change under a sign reversal; absolute t describes statistical prominence, not effect magnitude or the selection process."),
+    txt <- c(txt, "", current_rank_pattern()$text, "", paste0("Display direction: ", if (identical(input$orientation_mode,"original")) "Original coding" else "Documented semantic key", ". These are observed estimates using the selected display direction. RC marks reversed coefficients, t statistics and intervals; raw fits remain in the downloads. Items without a verified or explicitly declared key retain original coding, as do all items when Original coding is selected. Absolute t and p-values do not change under a sign reversal; absolute t orders estimates relative to their standard errors; coefficients and intervals show magnitude and direction."),
       "", "## Boundary comparison", "The regression estimates are unchanged across these views.")
     sets <- neighborhoods()$sets
     for (nm in names(sets)) txt <- c(txt, paste0("- ", nm, " (", length(sets[[nm]]), "): ", paste(sets[[nm]], collapse = ", ")))
@@ -635,7 +755,7 @@ server <- function(input, output, session) {
     txt <- c(txt, "", "## Measurement comparisons (user annotations)")
     if (!nrow(anns)) txt <- c(txt, "No conceptual substitutes have been certified. Empirical neighbors remain unclassified unless a comparison is recorded.")
     else for (i in seq_len(nrow(anns))) txt <- c(txt, paste0("- ", anns$focal[i], " / ", anns$item[i], " — ", anns$relation[i], ": ", anns$reason[i]))
-    c(txt, "", "## Interpretation (user declaration)", input$interpretation %or% "", "", "## Selection and source record",
+    c(txt, "", reference_report_text(current_reference()), "", "## Interpretation (user declaration)", input$interpretation %or% "", "", "## Selection and source record",
       paste("Rationale:", input$rationale), paste("Timing declaration:", input$timing), paste("Record:", input$record),
       paste(a$provenance, collapse = " "), "", paste("App version:", APP_VERSION),
       "This is a record of the present analysis, not a preregistration or a reconstruction of all past analysis choices.")
@@ -665,7 +785,7 @@ server <- function(input, output, session) {
   })
   output$provenance_panel <- renderUI({a <- result(); help_box("Sources and software", p(paste(a$provenance, collapse = " ")),
     p(paste(a$network$provenance, collapse = " ")), p(paste("Current runtime:", R.version.string, "· EGAnet", as.character(packageVersion("EGAnet")))),
-    p("This session runs on your computer. Network membership is empirical context; interpretation requires the measurement descriptions."))})
+    p("The app runs on the host serving this page; a localhost address uses your computer. Exports record the runtime and measurement context."))})
   payload <- reactive({
     a <- result()
     list(landscape = a$landscape, eligibility = a$eligibility, report = reports(), metadata = a$metadata,
@@ -673,6 +793,7 @@ server <- function(input, output, session) {
       documented_orientation_key = normalize_orientation_key(a$orientation,a$measures),
       network = a$network, neighborhoods = neighborhoods(), annotations = active_annotations(),
       input_provenance = a[["input_provenance"]],
+      concentration_reference = current_reference(),
       settings = list(app_version = APP_VERSION, source = a$label, run = rv$settings, model = c(a$model, list(measures = a$measures)),
         focal = focal(), boundary = input$boundary, multiplicity = isTRUE(input$multiplicity), orientation_mode=input$orientation_mode %or% "documented",
         question = input$question, population = input$population, analysis_unit = input$analysis_unit,
