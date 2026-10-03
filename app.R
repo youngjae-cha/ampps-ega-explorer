@@ -569,9 +569,12 @@ server <- function(input, output, session) {
         marker = list(size = nodes$size[at], color = nodes$color[at], symbol = nodes$symbol[at],
           line = list(color = nodes$outline[at], width = nodes$outline_width[at])),
         text = nodes$label[at], textposition = nodes$position[at], textfont = list(size = 11, color = "#284951"),
-        customdata = ids[at], hovertext = nodes$hover[at], hoverinfo = "text", showlegend = TRUE)
+        customdata = ids[at], hovertext = nodes$hover[at], hoverinfo = "text", showlegend = TRUE,
+        cliponaxis = FALSE)
     }
-    layout(p, xaxis = list(visible = FALSE), yaxis = list(visible = FALSE, scaleanchor = "x"),
+    x_span <- max(diff(range(xy[,1])), .1)
+    layout(p, xaxis = list(visible = FALSE, range = range(xy[,1]) + c(-.18, .18) * x_span),
+      yaxis = list(visible = FALSE, scaleanchor = "x"),
       legend = list(orientation = "h", x = .5, xanchor = "center", y = -.04,
         itemclick = FALSE, itemdoubleclick = FALSE),
       margin = list(l = 15, r = 15, b = 60, t = 30), paper_bgcolor = "white", plot_bgcolor = "white", dragmode = "pan") %>%
