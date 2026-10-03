@@ -10,9 +10,10 @@ source(file.path("R", "ega.R"), local = TRUE)
 source(file.path("R", "export.R"), local = TRUE)
 source(file.path("R", "concentration.R"), local = TRUE)
 source(file.path("R", "comparison.R"), local = TRUE)
+source(file.path("R", "map_display.R"), local = TRUE)
 options(shiny.maxRequestSize = 50 * 1024^2, shiny.sanitize.errors = TRUE)
 
-APP_VERSION <- "3.0.0"
+APP_VERSION <- "3.0.1"
 DEMO <- load_demo_data("data")
 DEMO_SOURCES <- read.csv(file.path("data", "gss_year_cell_source.csv"), check.names = FALSE)
 DEMO_NETWORK <- load_demo_network("data")
@@ -118,9 +119,9 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
       fluidRow(column(3, div(class = "panel-card controls",
         uiOutput("active_boundary"),
         uiOutput("network_method"),
-        next_btn("to_results", "View their results →"))),
-      column(9, div(class = "panel-card", plotlyOutput("network_plot", height = "570px"),
-        p(class = "figure-note", "Filled accent nodes: focal. Open accent nodes: current neighbors. Gray: other outcomes. Hover for labels and membership. Layout is fixed when boundaries change.")),
+        next_btn("to_results", "View the comparison results →"))),
+      column(9, div(class = "panel-card", plotlyOutput("network_plot", height = "720px"),
+        p(class = "figure-note", "Color = EGA community. Diamonds mark focal outcomes; dark-outlined circles mark their current unreported neighbors. Every outcome is labeled. Hover for item wording, response options, and measurement notes where supplied. Node positions remain fixed across comparison settings.")),
         div(class = "panel-card", tags$details(id = "boundary_checks",
           tags$summary("Optional: compare a narrower or wider neighborhood"),
           p("A nearby outcome can fall just outside a community. These additional views show what enters or leaves when the comparison range changes. You can continue with the EGA community without opening this check."),
@@ -554,19 +555,22 @@ server <- function(input, output, session) {
     ed <- which(upper.tri(net$adjacency) & abs(net$adjacency) > 0, arr.ind = TRUE)
     ex <- as.vector(t(cbind(xy[ed[,1],1], xy[ed[,2],1], NA_real_)))
     ey <- as.vector(t(cbind(xy[ed[,1],2], xy[ed[,2],2], NA_real_)))
-    role <- ifelse(ids %in% focal(), "Focal", ifelse(ids %in% neighborhood(), "Neighbor", "Other"))
-    labels <- a$metadata$label[match(ids, a$metadata$item)]; labels[is.na(labels)] <- ids[is.na(labels)]
-    hover <- paste0(htmltools::htmlEscape(ids), " · ", htmltools::htmlEscape(labels), "<br>Community ", net$membership[ids], "<br>", role)
+    nodes <- network_display(net, a$metadata, focal(), neighborhood(), identical(rv$settings$source, "demo"))
     p <- plot_ly(source = "network", type = "scatter", mode = "lines", x = ex, y = ey,
       line = list(color = "#d2dbdd", width = .65), hoverinfo = "skip", showlegend = FALSE)
-    p <- add_trace(p, x = xy[,1], y = xy[,2], type = "scatter", mode = "markers+text", inherit = FALSE,
-      marker = list(size = ifelse(role == "Focal", 19, ifelse(role == "Neighbor", 13, 9)),
-        color = ifelse(role == "Focal", ACCENT, ifelse(role == "Neighbor", "#eef7f7", "#ced5d6")),
-        line = list(color = ifelse(role == "Other", "#bcc8ca", ACCENT), width = 1.5)),
-      text = ifelse(role != "Other", ids, ""), textposition = "top center", textfont = list(size = 11, color = "#284951"),
-      customdata = ids, hovertext = hover, hoverinfo = "text", showlegend = FALSE)
+    for (group in sort(unique(nodes$community))) {
+      at <- which(nodes$community == group)
+      p <- add_trace(p, x = xy[at,1], y = xy[at,2], type = "scatter", mode = "markers+text", inherit = FALSE,
+        name = paste0("Community ", group, " · ", length(at)), legendgroup = group,
+        marker = list(size = nodes$size[at], color = nodes$color[at], symbol = nodes$symbol[at],
+          line = list(color = nodes$outline[at], width = nodes$outline_width[at])),
+        text = nodes$label[at], textposition = nodes$position[at], textfont = list(size = 11, color = "#284951"),
+        customdata = ids[at], hovertext = nodes$hover[at], hoverinfo = "text", showlegend = TRUE)
+    }
     layout(p, xaxis = list(visible = FALSE), yaxis = list(visible = FALSE, scaleanchor = "x"),
-      margin = list(l = 15, r = 15, b = 15, t = 25), paper_bgcolor = "white", plot_bgcolor = "white", dragmode = "pan") %>%
+      legend = list(orientation = "h", x = .5, xanchor = "center", y = -.04,
+        itemclick = FALSE, itemdoubleclick = FALSE),
+      margin = list(l = 15, r = 15, b = 60, t = 30), paper_bgcolor = "white", plot_bgcolor = "white", dragmode = "pan") %>%
       plotly::config(displaylogo = FALSE, modeBarButtonsToRemove = c("select2d", "lasso2d"))
   })
   plot_data <- reactive({

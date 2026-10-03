@@ -1,4 +1,12 @@
-# Version 3.0.0 verification
+# Version 3.0.1 verification
+
+## Manuscript display alignment, 2026-10-03
+
+The Map screen now retains a separate color for each EGA community, labels all outcomes, marks focal outcomes with diamonds, and outlines the current comparison. Community colors and node coordinates remain fixed when boundaries change. The Results navigation button uses the tutorial wording. Eleven GSS neighborhood items carry question wording, response options, respondent scope, and a codebook source in the hover display and exported item annotations. These display records use the project's existing item documentation; no annual values, graph memberships, regression fits, or reference calculations were changed.
+
+The following checks passed after these changes: `test_map_display.R`, `test_review_ui.R`, `test_boundary_ui.R`, `test_reference_server.R`, `test_server.R`, and `test_input_export.R`. They cover the rendered Plotly widget, 44 labels, four community colors, three focal diamonds, eight outlined community neighbors, stable colors/coordinates/fits across boundary changes, escaped uploaded labels, metadata in exports, uploaded-data analysis, reference reproduction, and stale-result blocking. Local browser inspection confirmed the updated map and tutorial button.
+
+## Version 3.0.0 baseline verification
 
 Local verification on 2026-10-02, macOS, R 4.4.1. This release starts from public commit `8fb2cd86de62b3a339c8d282df7366803c0ad84f` (1.0.4-review) in a separate checkout. The regression, EGA and input-provenance engines and historical tutorial inputs retain their source contents. New work concerns the conditional rank-sum reference, comparison reporting, plotted overview, state/export integration and reproducible package setup.
 

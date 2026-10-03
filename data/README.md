@@ -16,3 +16,6 @@ The annual aggregate model input and respondent-level network are different sour
 Display alignment never changes the stored input, fitted raw coefficients, SE, p-values or |t|. Both raw and oriented estimates are exported, together with active and documented keys. For a reversal the displayed interval is [-raw upper, -raw lower], not an inverted interval. This operation aligns item meaning; it does not claim a common construct, scale, respondent base or expected predictor effect.
 
 The app can separately analyze a user's own numeric CSV and estimate live EGA using supplied outcome rows. No uploaded data are included in exported bundles unless explicitly requested.
+# Item wording in the map
+
+`item_wordings.csv` supplies the eleven GSS neighborhood items' questions, response options, respondent scopes, and public codebook links from the existing project item documentation. The map displays these fields and the reproducibility ZIP retains them in `item_annotations.csv`. The other outcomes retain their available labels and measurement notes. These records describe questionnaire items; the supplied annual values and their coding remain unchanged.

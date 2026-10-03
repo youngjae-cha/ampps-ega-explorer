@@ -5404,7 +5404,7 @@
   },
   "files": {
     "app.R": {
-      "checksum": "bb6e7c207f6acb5a7a80285cd84fc061"
+      "checksum": "a091dc8a3cfc5402e4b2f2c73dd15031"
     },
     "data/effect_landscape.csv": {
       "checksum": "2d5d34ded219c5888c4955ae18314934"
@@ -5424,6 +5424,9 @@
     "data/item_stability.csv": {
       "checksum": "2547237555058ffb40ecee67a50a77e0"
     },
+    "data/item_wordings.csv": {
+      "checksum": "09190fec65d4cb8e4fa9de699ccbdd7a"
+    },
     "data/landscape_reference.csv": {
       "checksum": "bb21113379da22db735dcdc56bca9a62"
     },
@@ -5431,7 +5434,7 @@
       "checksum": "f5277ccc90371c700268f86a8e3f84b9"
     },
     "data/README.md": {
-      "checksum": "eea05efb59eb294deab7a0aa2cce7410"
+      "checksum": "330e926b573f0dd1999a244b6ad93fdb"
     },
     "data/typical_network.csv": {
       "checksum": "ca241200652fd14b3862c7712a898552"
@@ -5457,8 +5460,11 @@
     "R/export.R": {
       "checksum": "1cf01c7a43265663a4b55586076506c2"
     },
+    "R/map_display.R": {
+      "checksum": "c18a7d2d55a1f991f9b7c1e564c07b98"
+    },
     "R/model.R": {
-      "checksum": "b8f494849f8f8e1dd83a7dd4f7f86cef"
+      "checksum": "2967092f914e4e4bd265e01d29092305"
     },
     "R/provenance.R": {
       "checksum": "7b3fce6821c78ab85e17f2f92fc19344"

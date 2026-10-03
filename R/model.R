@@ -98,6 +98,14 @@ load_demo_data <- function(data_dir) {
   meta$domain[meta$item %in% c("Happy", "Hapmar", "Health", "Life", "Satjob")] <- "Well-being and related domains"
   meta$domain[meta$item %in% c("Trust", "Fair", "Helpful")] <- "Interpersonal attitudes"
   meta$domain[grepl("^Con", meta$item)] <- "Confidence in institutions"
+  wordings <- read.csv(file.path(data_dir, "item_wordings.csv"), check.names = FALSE, stringsAsFactors = FALSE)
+  wording_index <- match(meta$item, wordings$item)
+  for (field in c("question", "response_options", "wording_source")) {
+    meta[[field]] <- wordings[[field]][wording_index]
+    meta[[field]][is.na(meta[[field]])] <- ""
+  }
+  has_wording <- !is.na(wording_index)
+  meta$respondent_scope[has_wording] <- wordings$respondent_scope[wording_index[has_wording]]
   orientation <- normalize_orientation_key(read.csv(file.path(data_dir,"orientation_key.csv"), check.names=FALSE), items)
   meta$coding_note <- paste0(ifelse(orientation$multiplier == -1,"RC: display direction reversed. ",""), orientation$high_value_means,
     " [", orientation$status, "]")

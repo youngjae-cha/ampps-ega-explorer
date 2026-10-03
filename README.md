@@ -2,12 +2,12 @@
 
 A four-step application for examining how reported findings compare with unreported outcomes in secondary data. These comparisons help assess how support for a claim depends on the measures selected and focus examination of cherry-picking, measurement quality, underlying associations, and the comparison set.
 
-**Version 3.0.0.** This repository contains the app, small aggregate tutorial inputs, synthetic upload examples, and software tests. It does not contain the manuscript, reviewer correspondence, respondent-level GSS records, or private research files.
+**Version 3.0.1.** This repository contains the app, small aggregate tutorial inputs, synthetic upload examples, and software tests. It does not contain the manuscript, reviewer correspondence, respondent-level GSS records, or private research files.
 
 ## Try the four steps
 
 1. **Define:** specify the focal outcomes, predictor, and model. Include other candidate outcomes meeting the same coding and data-availability requirements. The supplied GSS example has these inputs prepared.
-2. **Map:** begin with the focal EGA communities, selected automatically. No distance setting is required. An optional collapsed section compares predefined 15/25/35% distance rings; all three are computed and exported. If you change the view, its label remains visible beside the map, with a button to return to the EGA communities.
+2. **Map:** begin with the focal EGA communities, selected automatically. Community colors and labels keep all outcomes visible; diamonds identify focal outcomes and dark outlines identify the current comparison. Hover over the eleven GSS neighborhood items to read their question wording, response options, and measurement notes. No distance setting is required. An optional collapsed section compares predefined 15/25/35% distance rings; all three are computed and exported. If you change the view, its label remains visible beside the map, with a button to return to the EGA communities.
 3. **Results:** compare reported and unreported outcomes, then read each original-unit coefficient with its interval. Absolute t orders estimates relative to their standard errors; the coefficients and intervals show magnitude, direction, and uncertainty. For a justified comparison set, the optional rank-sum reference quantifies how unusual the reported ranks are under a declared reporting or symmetry condition.
 4. **Interpret & export:** describe what a comparison adds, distinguish related outcomes from justified substitutes, and download the complete estimates and reporting record.
 
@@ -68,6 +68,7 @@ Rscript tests/test_review_ui.R
 Rscript tests/test_orientation.R
 Rscript tests/test_navigation.R
 Rscript tests/test_boundary_ui.R
+Rscript tests/test_map_display.R
 Rscript tests/test_concentration.R
 Rscript tests/test_reference_server.R
 Rscript tests/test_runtime.R
