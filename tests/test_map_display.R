@@ -15,6 +15,12 @@ shiny::testServer(app_env$server, {
     stopifnot(grepl("<b>Question:</b>", nodes$hover[nodes$item == id], fixed = TRUE),
       grepl("<b>Responses:</b>", nodes$hover[nodes$item == id], fixed = TRUE))
   baseline <- a$landscape; coordinates <- a$network$coordinates
+  stopifnot(grepl("RC: display direction reversed", output$network_plot, fixed = TRUE))
+  session$setInputs(orientation_mode = "original")
+  stopifnot(!grepl("RC: display direction reversed", output$network_plot, fixed = TRUE),
+    grepl("Original numerical coding", output$network_plot, fixed = TRUE),
+    identical(baseline, result()$landscape))
+  session$setInputs(orientation_mode = "documented")
   session$setInputs(boundary = "ring25")
   ring <- app_env$network_display(result()$network, result()$metadata, focal(), neighborhood())
   stopifnot(identical(nodes$color, ring$color), identical(nodes$label, ring$label),

@@ -555,7 +555,11 @@ server <- function(input, output, session) {
     ed <- which(upper.tri(net$adjacency) & abs(net$adjacency) > 0, arr.ind = TRUE)
     ex <- as.vector(t(cbind(xy[ed[,1],1], xy[ed[,2],1], NA_real_)))
     ey <- as.vector(t(cbind(xy[ed[,1],2], xy[ed[,2],2], NA_real_)))
-    nodes <- network_display(net, a$metadata, focal(), neighborhood(), identical(rv$settings$source, "demo"))
+    map_metadata <- a$metadata
+    key <- normalize_orientation_key(display_key(), map_metadata$item)
+    map_metadata$coding_note <- paste0(ifelse(key$multiplier == -1, "RC: display direction reversed. ", ""),
+      key$high_value_means, " [", key$status, "]")
+    nodes <- network_display(net, map_metadata, focal(), neighborhood(), identical(rv$settings$source, "demo"))
     p <- plot_ly(source = "network", type = "scatter", mode = "lines", x = ex, y = ey,
       line = list(color = "#d2dbdd", width = .65), hoverinfo = "skip", showlegend = FALSE)
     for (group in sort(unique(nodes$community))) {
