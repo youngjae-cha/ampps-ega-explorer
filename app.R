@@ -134,7 +134,8 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
     tabPanel("3 · Results", value = "results",
       lead(3, "What do the alternatives show?", "Read the fixed-model results alongside the EGA neighborhood, keeping each focal outcome visible."),
       fluidRow(column(3, div(class = "panel-card controls",
-        radioButtons("result_scope", "Show", c("Current map boundary" = "local", "All analyzable outcomes" = "all")),
+        radioButtons("result_scope", "Detailed results", c("Current map boundary" = "local", "All analyzable outcomes" = "all")),
+        uiOutput("result_scope_summary"),
         radioButtons("plot_metric", "Display", c("Order results by absolute t" = "abs_t", "Signed t-statistic" = "t", "Estimate with 95% interval" = "b")),
         radioButtons("orientation_mode", "Display direction", c("Documented semantic key"="documented", "Original coding"="original"), selected="documented"),
         checkboxInput("multiplicity", "Show optional Bonferroni sensitivity", FALSE),
@@ -144,9 +145,10 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
         downloadButton("download_plot", "Download result plot (PDF)"),
         next_btn("to_interpret", "Interpret and report →"))),
       column(9, conditionalPanel("input.plot_metric == 'abs_t'",
-        div(class="panel-card", h3("Where do the reported results fall?"),
+        div(class="panel-card", h3("Where do the focal results fall?"),
+          uiOutput("distribution_scope"),
           plotlyOutput("distribution_plot", height="330px"),
-          p(class="figure-note", "Raw points and box plots show absolute t for reported outcomes, unreported neighbors, and other analyzable outcomes. The groups organize the comparison; the reference calculation below uses an explicitly specified set.")),
+          uiOutput("distribution_note")),
         div(class="panel-card", id="reading_combined", h3("Read the individual results"),
           p(class="reading-intro", "Compare positions by absolute t, then read each coefficient and interval in its outcome's units and documented direction."),
           uiOutput("combined_estimates"),
@@ -510,12 +512,15 @@ server <- function(input, output, session) {
   output$scope_summary <- renderUI({a <- result(); p(paste(sum(a$eligibility$included), "outcomes included."),
     paste(sum(!a$eligibility$included), "excluded by recorded eligibility criteria."))})
   output$eligibility_table <- renderDT(datatable(result()$eligibility, rownames = FALSE, options = table_opts))
-  output$active_boundary <- renderUI({
+  boundary_label <- reactive({
     selected <- input$boundary %or% "community"
-    label <- switch(selected, community = "EGA communities (default)",
+    switch(selected, community = "EGA communities (default)",
       ring15 = "Distance ring · 15%", ring25 = "Distance ring · 25%",
       ring35 = "Distance ring · 35%", full = "Full analyzable set")
-    tagList(p(strong("Current comparison")), p(label),
+  })
+  output$active_boundary <- renderUI({
+    selected <- input$boundary %or% "community"
+    tagList(p(strong("Current comparison")), p(boundary_label()),
       p(class = "muted", paste(length(neighborhood()), "outcomes included.")),
       if (selected != "community") actionButton("reset_boundary", "Return to EGA communities"))
   })
@@ -621,28 +626,60 @@ server <- function(input, output, session) {
     plotlyOutput("landscape_plot", height = paste0(height, "px"))
   })
   output$landscape_plot <- renderPlotly(ggplotly(result_ggplot(), tooltip = "text") %>% plotly::config(displaylogo = FALSE))
+  output$result_scope_summary <- renderUI({
+    shown <- nrow(plot_data())
+    available <- sum(is.finite(result()$landscape$t))
+    tagList(p(class="muted", strong("Comparison boundary: "), boundary_label(),
+              paste0(" (", length(neighborhood()), " outcomes).")),
+      p(class="muted", paste0("Detailed results shown: ", shown, " of ", available,
+        " estimable outcomes", if (identical(input$result_scope, "all")) " (full set)." else " (current boundary).")))
+  })
   distribution_data <- reactive({
     x <- result()$landscape
     x <- x[is.finite(x$t), , drop=FALSE]
-    x$group <- ifelse(x$item %in% focal(), "Reported", ifelse(x$item %in% neighborhood(), "Unreported neighbors", "Other outcomes"))
+    # The overview records EGA membership, not the selected comparison boundary.
+    x$group <- ifelse(x$item %in% focal(), "focal",
+      ifelse(x$item %in% neighborhoods()$sets$community, "ega_neighbors", "other"))
     x$hover <- paste0(htmltools::htmlEscape(x$item), "<br>|t| = ", fmt(abs(x$t)))
     x
   })
+  distribution_groups <- reactive({
+    original_demo <- identical(rv$settings$source, "demo") &&
+      setequal(focal(), c("Happy", "Trust", "Fair"))
+    groups <- data.frame(group=c("focal", "ega_neighbors", "other"),
+      label=if (original_demo) c("Reported outcomes", "Unreported EGA neighbors", "Other outcomes") else
+        c("Focal outcomes", "Nonfocal EGA neighbors", "Other outcomes"),
+      color=c(ACCENT, "#778b91", "#afb9bd"), stringsAsFactors=FALSE)
+    groups$n <- as.integer(table(factor(distribution_data()$group, levels=groups$group)))
+    groups$tick <- paste0(gsub(" ", "<br>", groups$label, fixed=TRUE), "<br>(n = ", groups$n, ")")
+    groups
+  })
+  output$distribution_scope <- renderUI({
+    p(class="muted", paste0("Overview: all ", nrow(distribution_data()),
+      " estimable outcomes. Grouping: focal EGA communities."))
+  })
+  output$distribution_note <- renderUI({
+    tagList(p(class="figure-note", "Raw points and box plots show absolute t. EGA neighbors share a community with at least one focal outcome; other outcomes are outside those communities. Overview groups do not change with the comparison boundary."),
+      if (identical(rv$settings$source, "demo"))
+        p(class="figure-note", "Descriptive comparison only; no concentration-reference p-value is reported for this GSS example.") else
+        p(class="figure-note", "This overview is descriptive. Any concentration reference requires a separately specified reported subset, comparison set, and justified statistical condition."))
+  })
   output$distribution_plot <- renderPlotly({
-    x <- distribution_data()
-    colors <- c("Reported"=ACCENT, "Unreported neighbors"="#778b91", "Other outcomes"="#afb9bd")
+    x <- distribution_data(); groups <- distribution_groups()
     p <- plotly::plot_ly()
-    for (group in names(colors)) {
+    for (i in seq_len(nrow(groups))) {
+      group <- groups$group[i]
       rows <- x[x$group==group,,drop=FALSE]
       if (!nrow(rows)) next
-      p <- plotly::add_boxplot(p, y=abs(rows$t), name=group, text=rows$hover,
+      p <- plotly::add_boxplot(p, x=rep(group, nrow(rows)), y=abs(rows$t), name=groups$label[i], text=rows$hover,
         hoverinfo="text", boxpoints="all", jitter=.3, pointpos=0, quartilemethod="linear",
-        line=list(color=unname(colors[group])), marker=list(color=unname(colors[group]),size=6),
+        line=list(color=groups$color[i]), marker=list(color=groups$color[i],size=6),
         showlegend=FALSE)
     }
     plotly::layout(p, yaxis=list(title="Absolute t", rangemode="tozero"),
-      xaxis=list(title="",categoryorder="array",categoryarray=names(colors)),
-      margin=list(l=55,r=15,t=15,b=65),paper_bgcolor="white",plot_bgcolor="white") %>%
+      xaxis=list(title="",type="category",categoryorder="array",categoryarray=groups$group,
+        tickmode="array",tickvals=groups$group,ticktext=groups$tick,tickangle=0,tickfont=list(size=11),range=c(-.5,2.5)),
+      margin=list(l=55,r=15,t=15,b=85),paper_bgcolor="white",plot_bgcolor="white") %>%
       plotly::config(displaylogo=FALSE)
   })
   output$combined_estimates <- renderUI({
