@@ -102,7 +102,7 @@ ui <- fluidPage(title = "AMPPS EGA Explorer",
       column(8, div(class = "panel-card",
         selectizeInput("focal", "Focal outcomes", choices = DEMO_ITEMS, selected = c("Happy", "Trust", "Fair"), multiple = TRUE),
         p(class = "muted", "These may be reported findings or theory-selected outcomes. The label records their role, not when they were selected."),
-        textAreaInput("question", "Question or claim", "What do outcomes surrounding happiness, trust, and fairness add to the interpretation of residential mobility?", rows = 2, width = "100%"),
+        textAreaInput("question", "Question or claim", "Declines in U.S. residential mobility predict subsequent declines in happiness, trust in others, and perceived fairness.", rows = 2, width = "100%"),
         fluidRow(column(6, textInput("population", "Population / period", "GSS example · United States, 1972–2018")),
                  column(6, textInput("analysis_unit", "Analysis unit", "Year (annual aggregate)"))),
         textInput("network_unit", "Network-data unit", "Individual survey respondents (archived map)"),
@@ -353,7 +353,7 @@ server <- function(input, output, session) {
     updateTextInput(session, "population", value = "GSS example · United States, 1972–2018")
     updateTextInput(session, "analysis_unit", value = "Year (annual aggregate)")
     updateTextInput(session, "network_unit", value = "Individual survey respondents (archived map)")
-    updateTextAreaInput(session, "question", value = "What do outcomes surrounding happiness, trust, and fairness add to the interpretation of residential mobility?")
+    updateTextAreaInput(session, "question", value = "Declines in U.S. residential mobility predict subsequent declines in happiness, trust in others, and perceived fairness.")
     updateTextAreaInput(session, "rationale", value = "Linked to the original study's theoretical model.")
     updateTextAreaInput(session, "interpretation", value = "")
     updateTextInput(session, "record", value = "")

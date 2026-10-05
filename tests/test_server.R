@@ -2,6 +2,8 @@
 # Integration tests execute the real Shiny server, not a replacement server.
 app_env <- new.env(parent = globalenv())
 sys.source("app.R", envir = app_env, chdir = TRUE)
+expected_demo_question <- "Declines in U.S. residential mobility predict subsequent declines in happiness, trust in others, and perceived fairness."
+stopifnot(grepl(expected_demo_question, paste(as.character(app_env$ui), collapse = ""), fixed = TRUE))
 
 expect_server_error <- function(code, pattern) {
   msg <- tryCatch({force(code); NULL}, error = function(e) conditionMessage(e))
@@ -177,6 +179,7 @@ shiny::testServer(app_env$server, {
   # Explicitly returning to the bundled example restores all three focal rows.
   session$setInputs(source_mode = "demo", focal = c("Happy", "Trust", "Fair"), run = 5L)
   stopifnot(is.null(rv$error), !dirty(), length(result()$measures) == 44L,
+            identical(input_updates$question$value, expected_demo_question),
             identical(input_updates$include_inputs$value, FALSE),
             identical(input_updates$relation_reason$value, ""),
             nrow(reports()$focal) == 3L,
