@@ -5,7 +5,7 @@ d <- load_demo_data("data")
 items <- d$metadata$item
 raw <- fit_landscape(d$data,items,"MobilityLag",own_lag=TRUE)
 out <- orient_landscape(raw,d$orientation)
-flipped <- c("Happy","Hapmar","Health","Life","Satjob","News")
+flipped <- c("Happy","Hapmar","Health","Life","Satjob","News","Trust","Helpful","Finalter")
 idx <- out$item %in% flipped
 stopifnot(identical(out$item[out$orientation_reversed], items[items %in% flipped]),
   identical(out$b,raw$b), identical(out$t,raw$t), identical(out$p,raw$p), identical(out$se,raw$se),
@@ -14,14 +14,17 @@ stopifnot(identical(out$item[out$orientation_reversed], items[items %in% flipped
   isTRUE(all.equal(out$oriented_ci_lo[idx],-raw$ci_hi[idx])),
   isTRUE(all.equal(out$oriented_ci_hi[idx],-raw$ci_lo[idx])),
   all(out$oriented_ci_lo<=out$oriented_ci_hi),
-  all(out$orientation_multiplier[match(c("Trust","Fair","Helpful","Finalter"),out$item)]==1),
-  all(startsWith(out$orientation_status[match(c("Trust","Fair","Helpful","Finalter"),out$item)],"raw_")))
+  identical(out$orientation_multiplier[match(c("Trust","Fair","Helpful","Finalter"),out$item)],c(-1,1,-1,-1)),
+  all(out$orientation_status[match(c("Trust","Fair","Helpful","Finalter"),out$item)]=="verified"))
 reports <- make_report_tables(raw,c("Happy","Trust","Fair"),items,d$metadata,TRUE,d$orientation)
 base <- make_report_tables(raw,c("Happy","Trust","Fair"),items,d$metadata,TRUE)
 stopifnot(identical(reports$all$observed_abs_t_rank_universe,base$all$observed_abs_t_rank_universe),
   identical(reports$all$p_bonferroni_universe,base$all$p_bonferroni_universe))
 shown <- display_oriented_estimates(reports$all)
-stopifnot(shown$b[shown$item=="Happy"]>0, shown$raw_b[shown$item=="Happy"]<0)
+stopifnot(shown$b[shown$item=="Happy"]>0, shown$raw_b[shown$item=="Happy"]<0,
+  all(shown$b[match(c("Trust","Fair","Helpful","Finalter"),shown$item)]>0),
+  shown$b[shown$item=="Life"]<0,
+  all(grepl("Inherited analysis coding:",d$metadata$response_options[match(c("Trust","Fair","Helpful","Finalter"),d$metadata$item)],fixed=TRUE)))
 fails <- function(expr) inherits(tryCatch(force(expr),error=function(e)e),"error")
 stopifnot(fails(normalize_orientation_key(c(Happy=0),items)),
   fails(normalize_orientation_key(c(Happy=-1,Happy=1),items)))

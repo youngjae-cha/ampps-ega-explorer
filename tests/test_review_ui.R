@@ -18,7 +18,10 @@ shiny::testServer(app_env$server, {
     grepl("Self-rated health", html, fixed = TRUE),
     grepl("Coefficient b", html, fixed = TRUE))
   stopifnot(grepl("HAPPY) [RC]",html,fixed=TRUE),
-    grepl("TRUST) [original]",html,fixed=TRUE),
+    grepl("TRUST) [RC]",html,fixed=TRUE),
+    grepl("Greater fairness",html,fixed=TRUE),
+    !grepl("FAIR) [RC]",html,fixed=TRUE),
+    plot_data()$b[plot_data()$item=="Trust"]>0,
     plot_data()$b[plot_data()$item=="Happy"]>0,
     reports()$focal$b[reports()$focal$item=="Happy"]<0,
     reports()$focal$oriented_b[reports()$focal$item=="Happy"]>0,
